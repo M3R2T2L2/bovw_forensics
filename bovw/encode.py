@@ -37,10 +37,20 @@ def _chunks(feats: LocalFeatures, vocab: Vocabulary, max_rows: int = 65_536):
         i = j
 
 
-def postprocess(x: np.ndarray, power: float = 0.5, l2: bool = True) -> np.ndarray:
-    if power and power != 1.0:
-        x = np.sign(x) * np.abs(x) ** power
-    return l2n(x) if l2 else x
+def postprocess(x: np.ndarray, power: float = 0.5, l2: bool = True, block: int = 1024) -> np.ndarray:
+    """Signed power then L2, in place, a block of rows at a time.
+
+    Keeps peak memory at ~1x the encoding (VLAD at 8,000 x 32,768 is ~1 GB).
+    """
+    for i in range(0, x.shape[0], block):
+        b = x[i:i + block]
+        if power and power != 1.0:
+            t = np.abs(b)
+            np.power(t, power, out=t)
+            np.copysign(t, b, out=b)
+        if l2:
+            b /= np.linalg.norm(b, axis=1, keepdims=True) + 1e-12
+    return x
 
 
 def hard(feats: LocalFeatures, vocab: Vocabulary, **pp) -> np.ndarray:
@@ -82,8 +92,10 @@ def vlad(feats: LocalFeatures, vocab: Vocabulary, intra_norm: bool = True, **pp)
     for ids, x in _chunks(feats, vocab):
         a = _sqdist(x, vocab.centers).argmin(1)
         np.add.at(out, (ids, a), x - vocab.centers[a])
-    if intra_norm:
-        out /= np.linalg.norm(out, axis=2, keepdims=True) + 1e-12
+    if intra_norm:  # per-word L2, in row blocks to avoid a full-size temporary
+        for i in range(0, out.shape[0], 256):
+            b = out[i:i + 256]
+            b /= np.linalg.norm(b, axis=2, keepdims=True) + 1e-12
     return postprocess(out.reshape(feats.n_images, k * d), **pp)
 
 

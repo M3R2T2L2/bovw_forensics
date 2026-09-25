@@ -15,7 +15,7 @@ import numpy as np
 class LocalFeatures:
     """Ragged per-image descriptors stored as one flat array.
 
-    desc:     (N_total, D) float32, all descriptors of all images stacked
+    desc:     (N_total, D) float32 or float16, all descriptors of all images stacked
     offsets:  (n_images + 1,) int64, image i owns desc[offsets[i]:offsets[i+1]]
     global_:  optional (n_images, G) float32 per-image embedding (e.g. CLS token)
     """
@@ -39,13 +39,16 @@ class LocalFeatures:
         return np.diff(self.offsets)
 
     @staticmethod
-    def from_list(per_image: list, global_: Optional[np.ndarray] = None, dim: Optional[int] = None) -> "LocalFeatures":
+    def from_list(per_image: list, global_: Optional[np.ndarray] = None, dim: Optional[int] = None,
+                  dtype=np.float32) -> "LocalFeatures":
+        """Stack per-image descriptor arrays into one preallocated array (single copy)."""
         if dim is None:
             dim = next((d.shape[1] for d in per_image if d.size), 0)
-        counts = [d.shape[0] for d in per_image]
+        counts = [int(np.prod(d.shape) // dim) if dim else 0 for d in per_image]
         offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
-        parts = [d.reshape(-1, dim).astype(np.float32) for d in per_image]
-        desc = np.concatenate(parts, axis=0) if parts else np.zeros((0, dim), np.float32)
+        desc = np.empty((int(offsets[-1]), dim), dtype=dtype)
+        for i, d in enumerate(per_image):
+            desc[offsets[i]:offsets[i + 1]] = d.reshape(-1, dim)
         return LocalFeatures(desc=desc, offsets=offsets, global_=global_)
 
 

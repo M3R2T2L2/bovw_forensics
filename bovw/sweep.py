@@ -11,6 +11,7 @@ labels are cached next to the features, so a fresh Colab runtime with a warm
 Drive cache skips the dataset download entirely.
 """
 
+import gc
 import itertools
 import json
 import os
@@ -101,9 +102,13 @@ def variant_label(params: dict) -> str:
 
 def _env() -> dict:
     info = {"n_cpu": os.cpu_count()}
-    torch = sys.modules.get("torch")
-    if torch is not None and torch.cuda.is_available():
-        info["gpu"] = torch.cuda.get_device_name(0)
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            info["gpu"] = torch.cuda.get_device_name(0)
+    except ImportError:
+        pass
     return info
 
 
@@ -181,6 +186,13 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     if progress:
                         print(f"[{ex_name:>12}] {m:<5} K={k:<5} s={seed} {var:<22} "
                               f"NMI={row['nmi']:.3f}  ACC={row['acc']:.3f}")
+                    del x
+                del vocab
+
+        # Release this extractor's features before the next one is extracted or loaded;
+        # holding two descriptor sets at once is what exhausts Colab RAM at 8,000 images.
+        del feats
+        gc.collect()
 
     df = load_results(jsonl)
     df.to_csv(out_dir / f"{cfg['name']}.csv", index=False)  # clean, rectangular copy

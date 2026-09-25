@@ -73,5 +73,6 @@ class FoundationExtractor:
                 h = out.last_hidden_state if self.layer == -1 else out.hidden_states[self.layer]
                 h = h.float().cpu().numpy()
                 cls.append(h[:, 0])
-                patches.extend(h[:, self.spec.n_prefix:])  # (P, D) per image
-        return LocalFeatures.from_list(patches, global_=np.concatenate(cls).astype(np.float32))
+                patches.extend(h[:, self.spec.n_prefix:].astype(np.float16))  # (P, D) per image
+        return LocalFeatures.from_list(patches, global_=np.concatenate(cls).astype(np.float32),
+                                       dtype=np.float16)

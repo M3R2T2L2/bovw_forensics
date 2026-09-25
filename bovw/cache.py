@@ -23,7 +23,7 @@ def cache_key(dataset: str, extractor: str, params: dict) -> str:
 
 def save(feats: LocalFeatures, path: Path, meta: dict | None = None) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    np.save(path / "desc.npy", feats.desc.astype(np.float16))
+    np.save(path / "desc.npy", feats.desc.astype(np.float16, copy=False))
     np.save(path / "offsets.npy", feats.offsets)
     if feats.global_ is not None:
         np.save(path / "global.npy", feats.global_.astype(np.float16))

@@ -54,7 +54,8 @@ class _Parallel:
                 out = list(tqdm(it, total=len(images), desc=f"{self.name} x{self.n_jobs}", disable=not progress))
         finally:
             cv2.setNumThreads(-1)
-        return LocalFeatures.from_list(out, dim=self.dim)
+        # float16 halves peak RAM (8,000 STL-10 images of dense SIFT: ~1.5 GB instead of ~3 GB)
+        return LocalFeatures.from_list(out, dim=self.dim, dtype=np.float16)
 
 
 class SIFTExtractor(_Parallel):
@@ -84,12 +85,12 @@ class SIFTExtractor(_Parallel):
         else:
             _, d = sift.detectAndCompute(gray, None)
         if d is None:
-            return np.zeros((0, 128), np.float32)
+            return np.zeros((0, 128), np.float16)
         d = d.astype(np.float32)
         if self.root_sift:  # Arandjelovic & Zisserman 2012
             d /= d.sum(axis=1, keepdims=True) + 1e-7
             d = np.sqrt(d)
-        return d
+        return d.astype(np.float16)
 
 
 class ORBExtractor(_Parallel):
@@ -106,5 +107,5 @@ class ORBExtractor(_Parallel):
         gray = _to_gray(img, self.resize)
         _, d = self._cv().detectAndCompute(gray, None)
         if d is None:
-            return np.zeros((0, 256), np.float32)
-        return np.unpackbits(d, axis=1).astype(np.float32)
+            return np.zeros((0, 256), np.float16)
+        return np.unpackbits(d, axis=1).astype(np.float16)
