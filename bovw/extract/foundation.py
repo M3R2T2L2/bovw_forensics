@@ -42,7 +42,11 @@ class FoundationExtractor:
         self.image_size, self.batch_size, self.layer = image_size, batch_size, layer
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = getattr(torch, dtype) if self.device == "cuda" else torch.float32
-        self.model = AutoModel.from_pretrained(self.spec.hf_id, torch_dtype=self.dtype).to(self.device).eval()
+        try:
+            model = AutoModel.from_pretrained(self.spec.hf_id, dtype=self.dtype)
+        except TypeError:  # transformers < 4.56 only knows torch_dtype
+            model = AutoModel.from_pretrained(self.spec.hf_id, torch_dtype=self.dtype)
+        self.model = model.to(self.device).eval()
         # ImageNet normalisation used by DINOv2
         self.mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)

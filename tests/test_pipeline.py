@@ -125,3 +125,43 @@ def test_handcrafted_extractors(name, dim):
     f = get_extractor(name)(imgs, progress=False)
     assert f.n_images == 4 and f.dim == dim
     assert f.counts().sum() > 0
+
+
+def test_sweep_mixed_rows_resume_and_lazy_images(tmp_path, monkeypatch):
+    """Global-baseline rows and codebook rows have different columns (the Colab
+    ParserError). Also: a rerun with a warm cache must not load images."""
+    import bovw.sweep as S
+
+    rng = np.random.default_rng(0)
+
+    def fake_extractor(name, **kw):
+        def call(images, progress=True):
+            per = [rng.normal(size=(20, 8)) for _ in images]
+            return LocalFeatures.from_list(per, global_=rng.normal(size=(len(images), 6)).astype(np.float32))
+        return call
+
+    monkeypatch.setattr(S, "get_extractor", fake_extractor)
+    cfg = {"name": "t", "dataset": {"name": "synthetic", "n_per_class": 5, "n_classes": 3},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractors": [{"name": "fake"}], "vocab": {"k": [4, 8]},
+           "assignments": ["hard", "soft", "vlad"], "eval": {"clustering": {"pca_dim": None, "seeds": [0]}}}
+    df = S.run(cfg, progress=False)
+    assert len(df) == 1 + 2 * 3
+    assert set(df["assignment"]) == {"global", "hard", "soft", "vlad"}
+    assert (tmp_path / "r" / "t.csv").exists()
+    import pandas as pd
+    assert len(pd.read_csv(tmp_path / "r" / "t.csv")) == 7
+
+    loads = []
+    real = S.data.load
+    monkeypatch.setattr(S.data, "load", lambda *a, **k: (loads.append(1), real(*a, **k))[1])
+    df2 = S.run(cfg, progress=False)
+    assert len(df2) == 7 and loads == []
+
+
+def test_load_results_skips_truncated_line(tmp_path):
+    from bovw.sweep import load_results
+
+    p = tmp_path / "x.jsonl"
+    p.write_text('{"run_id": "a", "nmi": 1}\n{"run_id": "b", "n')
+    assert list(load_results(p)["run_id"]) == ["a"]

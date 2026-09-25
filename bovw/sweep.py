@@ -1,8 +1,14 @@
 """Config-driven sweep: extractor x vocabulary size K x assignment method.
 
-One CSV row per run, written as soon as the run finishes, so a Colab
-disconnect loses at most the run in progress. Re-running the same config
-skips rows already in the CSV.
+Each run is appended to `<name>.jsonl` as soon as it finishes, so a Colab
+disconnect loses at most the run in progress, and rows with different
+columns (e.g. the global baseline vs. codebook runs) never collide. A clean
+`<name>.csv` is rewritten from the JSONL at the end of every sweep.
+Re-running the same config skips runs already recorded.
+
+Images are loaded only when some extractor's features are not cached yet;
+labels are cached next to the features, so a fresh Colab runtime with a warm
+Drive cache skips the dataset download entirely.
 """
 
 import json
@@ -28,9 +34,51 @@ def _run_id(*parts) -> str:
     return "|".join(str(p) for p in parts)
 
 
-def _append(csv: Path, row: dict) -> None:
-    df = pd.DataFrame([row])
-    df.to_csv(csv, mode="a", header=not csv.exists(), index=False)
+def _append(jsonl: Path, row: dict) -> None:
+    with jsonl.open("a") as f:
+        f.write(json.dumps(row, default=lambda o: o.item() if hasattr(o, "item") else str(o)) + "\n")
+
+
+def load_results(jsonl: Path) -> pd.DataFrame:
+    """Read results; tolerates a truncated last line from a killed runtime."""
+    rows = []
+    if jsonl.exists():
+        for line in jsonl.read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return pd.DataFrame(rows)
+
+
+class _LazyDataset:
+    """Loads images on first use; labels come from cache when available."""
+
+    def __init__(self, name: str, kwargs: dict, cache_dir: Path, tag: str):
+        self.name, self.kwargs = name, kwargs
+        self.labels_path = cache_dir / f"{tag}__labels.npy"
+        self._images = None
+        self._labels = np.load(self.labels_path) if self.labels_path.exists() else None
+
+    def _load(self):
+        self._images, labels = data.load(self.name, **self.kwargs)
+        if self._labels is not None and not np.array_equal(self._labels, labels):
+            raise RuntimeError(f"Cached labels at {self.labels_path} do not match the dataset; delete them.")
+        self._labels = labels
+        self.labels_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(self.labels_path, labels)
+
+    @property
+    def images(self):
+        if self._images is None:
+            self._load()
+        return self._images
+
+    @property
+    def labels(self):
+        if self._labels is None:
+            self._load()
+        return self._labels
 
 
 def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
@@ -39,11 +87,12 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     cache_dir = Path(cfg["cache_dir"])
     out_dir = Path(cfg["results_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv = out_dir / f"{cfg['name']}.csv"
-    done = set(pd.read_csv(csv)["run_id"]) if csv.exists() else set()
+    jsonl = out_dir / f"{cfg['name']}.jsonl"
+    prev = load_results(jsonl)
+    done = set(prev["run_id"]) if "run_id" in prev else set()
 
-    images, labels = data.load(ds_name, **ds_cfg)
     ds_tag = f"{ds_name}_" + "_".join(f"{k}{v}" for k, v in sorted(ds_cfg.items()) if k != "root")
+    ds = _LazyDataset(ds_name, ds_cfg, cache_dir, ds_tag)
     eval_cfg = cfg.get("eval", {}).get("clustering", {})
     ks = cfg["vocab"]["k"]
     methods = cfg["assignments"]
@@ -55,7 +104,8 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
 
         feats, info = cache.get_or_compute(
             cache_dir, ds_tag, ex_name, ex_params,
-            lambda: get_extractor(ex_name, **ex_params)(images, progress=progress))
+            lambda: get_extractor(ex_name, **ex_params)(ds.images, progress=progress))
+        labels = ds.labels
         base = {"config": cfg["name"], "dataset": ds_tag, "extractor": ex_name,
                 "n_images": feats.n_images, "desc_dim": feats.dim,
                 "desc_per_image": float(feats.counts().mean()),
@@ -67,7 +117,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 row = {"run_id": rid, **base, "assignment": "global", "k": 0, "enc_dim": feats.global_.shape[1]}
                 with budget(row, "eval"):
                     row.update(evaluate_clustering(feats.global_, labels, **eval_cfg))
-                _append(csv, row)
+                _append(jsonl, row)
                 if progress:
                     print(f"[{ex_name:>12}] global          NMI={row['nmi']:.3f}")
 
@@ -88,11 +138,13 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 row["enc_dim"] = x.shape[1]
                 with budget(row, "eval"):
                     row.update(evaluate_clustering(x, labels, **eval_cfg))
-                _append(csv, row)
+                _append(jsonl, row)
                 if progress:
                     print(f"[{ex_name:>12}] {m:<5} K={k:<5}  NMI={row['nmi']:.3f}  ACC={row['acc']:.3f}")
 
-    return pd.read_csv(csv)
+    df = load_results(jsonl)
+    df.to_csv(out_dir / f"{cfg['name']}.csv", index=False)  # clean, rectangular copy
+    return df
 
 
 def main(argv=None) -> None:

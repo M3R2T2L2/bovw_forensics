@@ -18,7 +18,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 | `bovw/encode.py` | `hard`, `soft` (kernel codebook), `vlad` (intra-norm); power + L2 normalisation |
 | `bovw/eval/` | Clustering: NMI, ARI, Hungarian accuracy over several seeds |
 | `bovw/timing.py` | Wall time, peak RSS, and peak GPU memory for every stage |
-| `bovw/sweep.py` | YAML-driven grid; writes each row on completion and skips finished runs on rerun |
+| `bovw/sweep.py` | YAML-driven grid; appends each run to `<name>.jsonl`, rewrites a clean `<name>.csv`, skips finished runs; loads images only on a cache miss |
 | `bovw/plots.py` | Metric vs. K (small multiples), cost vs. metric, summary table |
 
 ## Quick start
