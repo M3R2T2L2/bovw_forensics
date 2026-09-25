@@ -1,0 +1,26 @@
+# Torch-free smoke test: runs in about a minute on CPU.
+name: smoke_synthetic
+
+dataset:
+  name: synthetic
+  n_per_class: 30
+  n_classes: 4
+
+cache_dir: ./.cache/features
+results_dir: ./results
+
+extractors:
+  - name: dense_sift
+    params: {resize: 96, step: 8, size: 16}
+  - name: orb
+    params: {resize: 224, max_kp: 300}
+
+vocab:
+  k: [16, 64]
+  max_descriptors: 50000
+
+assignments: [hard, soft, vlad]
+vlad_max_k: 64
+
+eval:
+  clustering: {pca_dim: 32, seeds: [0, 1]}

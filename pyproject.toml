@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bovw-forensics"
+version = "0.1.0"
+description = "Bag of Visual Words over handcrafted and foundation-model descriptors: shared pipeline for the BoVW Forensics research program."
+authors = [{ name = "Lien Lea Merritt" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+    "opencv-python-headless>=4.8",
+    "pyyaml>=6.0",
+    "pandas>=2.0",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+foundation = ["torch>=2.1", "torchvision>=0.16", "transformers>=4.40"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["bovw*"]

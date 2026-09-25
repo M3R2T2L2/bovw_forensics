@@ -1,0 +1,40 @@
+# P0 minimal loop: STL-10 clustering, two descriptor families, small K grid.
+# Runtime on a Colab T4: roughly 15-25 min end to end (most of it dense SIFT
+# extraction and k-means at K=1024). Extraction is cached, so reruns are fast.
+
+name: p0_minimal_stl10
+
+dataset:
+  name: stl10
+  split: test          # 8,000 labelled images, 10 classes
+  n_per_class: 200     # 2,000 images; set to null for all 8,000
+  root: /content/data
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 224, batch_size: 64}
+    vocab: {pca_dim: 64, spherical: true}
+  - name: dense_sift
+    params: {resize: 224, step: 8, size: 16}
+    vocab: {pca_dim: null, spherical: false}
+
+vocab:
+  k: [64, 256, 1024]
+  max_descriptors: 200000
+  seed: 0
+
+assignments: [hard, soft, vlad]
+vlad_max_k: 256          # VLAD dim = K x d; skipped above this K
+
+encode:
+  soft: {knn: 5}
+
+global_baseline: true    # CLS-token clustering for foundation backbones
+
+eval:
+  clustering:
+    pca_dim: 128
+    seeds: [0, 1, 2]
