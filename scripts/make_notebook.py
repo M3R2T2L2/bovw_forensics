@@ -30,6 +30,17 @@ else:
 !pip install -q -e ".[dev]"   # torch, torchvision, transformers come preinstalled on Colab"""),
     code("""# 30-second check that the torch-free core works in this runtime
 !python -m pytest -q"""),
+    code("""# STL-10 on Drive: restore it here (skips the ~45 min download), or save it after the first download.
+import os, shutil
+DRIVE_STL = "/content/drive/MyDrive/bovw-forensics/data/stl10_binary"
+LOCAL_STL = "/content/data/stl10_binary"
+if os.path.isdir(DRIVE_STL) and not os.path.isdir(LOCAL_STL):
+    shutil.copytree(DRIVE_STL, LOCAL_STL); print("Restored STL-10 from Drive")
+elif os.path.isdir(LOCAL_STL) and not os.path.isdir(DRIVE_STL):
+    shutil.copytree(LOCAL_STL, DRIVE_STL); print("Saved STL-10 to Drive for future runtimes")
+else:
+    print("STL-10 will download on first use; re-run this cell afterwards to save it to Drive"
+          if not os.path.isdir(LOCAL_STL) else "STL-10 already local and on Drive")"""),
     ]
 
 
