@@ -5,7 +5,7 @@ Post-processing follows common practice: signed square-root (power) then L2.
 
   hard : K-dim term-frequency histogram
   soft : K-dim kernel-codebook histogram over the `knn` nearest words
-         (van Gemert et al. 2010); sigma defaults to the median distance
+         (van Gemert et al. 2010); sigma = sigma_scale x the median distance
          to the nearest word
   vlad : K*d residual aggregation with intra-normalisation (Arandjelovic &
          Zisserman 2013). Size grows as K*d, so keep K small (<= 256).
@@ -59,8 +59,10 @@ def estimate_sigma(feats: LocalFeatures, vocab: Vocabulary, max_n: int = 20_000,
     return float(np.sqrt(np.median(_sqdist(x, vocab.centers).min(1))) + 1e-8)
 
 
-def soft(feats: LocalFeatures, vocab: Vocabulary, knn: int = 5, sigma: float | None = None, **pp) -> np.ndarray:
-    sigma = sigma or estimate_sigma(feats, vocab)
+def soft(feats: LocalFeatures, vocab: Vocabulary, knn: int = 5, sigma: float | None = None,
+         sigma_scale: float = 1.0, **pp) -> np.ndarray:
+    """sigma_scale multiplies the median nearest-word distance; smaller = closer to hard."""
+    sigma = (sigma or estimate_sigma(feats, vocab)) * sigma_scale
     knn = min(knn, vocab.k)
     out = np.zeros((feats.n_images, vocab.k), np.float32)
     for ids, x in _chunks(feats, vocab):

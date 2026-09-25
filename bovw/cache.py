@@ -49,7 +49,9 @@ def get_or_compute(root: Path, dataset: str, extractor: str, params: dict,
     path = Path(root) / cache_key(dataset, extractor, params)
     if (path / "meta.json").exists():
         meta = json.loads((path / "meta.json").read_text())
-        return load(path), {"cache_hit": True, **meta}
+        # Load into RAM: encoders re-read descriptors on every run, and Drive-backed
+        # memory maps are slow. 8,000 STL-10 images of dense SIFT is ~1.5 GB (float16).
+        return load(path, mmap=False), {"cache_hit": True, **meta}
     t0 = time.perf_counter()
     feats = compute()
     secs = time.perf_counter() - t0

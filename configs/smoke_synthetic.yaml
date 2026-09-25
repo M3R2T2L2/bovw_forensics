@@ -1,4 +1,4 @@
-# Torch-free smoke test: runs in about a minute on CPU.
+# Torch-free smoke test: runs in well under a minute on CPU.
 name: smoke_synthetic
 
 dataset:
@@ -14,13 +14,18 @@ extractors:
     params: {resize: 96, step: 8, size: 16}
   - name: orb
     params: {resize: 224, max_kp: 300}
+    encode: {soft: {knn: 3}}
 
 vocab:
   k: [16, 64]
+  seeds: [0, 1]
   max_descriptors: 50000
 
 assignments: [hard, soft, vlad]
 vlad_max_k: 64
+
+encode:
+  soft: {knn: [3, 5], sigma_scale: [0.5, 1.0]}
 
 eval:
   clustering: {pca_dim: 32, seeds: [0, 1]}

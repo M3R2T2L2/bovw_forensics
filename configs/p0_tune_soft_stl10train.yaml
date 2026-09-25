@@ -1,0 +1,45 @@
+# Step 1 of the full P0 STL-10 run: tune soft assignment on the TRAIN split.
+# The chosen (knn, sigma_scale) per extractor is then fixed for the TEST run,
+# so reported numbers are never tuned on the data they are reported on.
+#
+# 2,000 train images; 4 x 3 soft variants x 3 K; hard for reference.
+# Runtime on a Colab T4 (2 vCPU): roughly 25-35 min, mostly dense-SIFT
+# extraction (~4 min on 2 threads) and soft encoding of SIFT at K=1024.
+
+name: p0_tune_soft_stl10train
+
+dataset:
+  name: stl10
+  split: train          # 5,000 labelled images
+  n_per_class: 200
+  root: /content/data
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 224, batch_size: 64}
+    vocab: {pca_dim: 64, spherical: true}
+  - name: dense_sift
+    params: {resize: 224, step: 8, size: 16}
+    vocab: {pca_dim: null, spherical: false}
+
+vocab:
+  k: [64, 256, 1024]
+  seeds: [0]
+  max_descriptors: 200000
+
+assignments: [hard, soft]
+
+encode:
+  soft:
+    knn: [3, 5, 10]
+    sigma_scale: [0.25, 0.5, 1.0, 2.0]
+
+global_baseline: false
+
+eval:
+  clustering:
+    pca_dim: 128
+    seeds: [0, 1, 2]

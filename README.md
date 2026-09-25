@@ -12,18 +12,23 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 
 | Module | Contents |
 |---|---|
-| `bovw/extract/` | `dense_sift`, `sift` (RootSIFT), `orb`; `dinov2_s/b` (+ register variants) patch tokens + CLS |
+| `bovw/extract/` | `dense_sift`, `sift` (RootSIFT), `orb` (thread-parallel); `dinov2_s/b` (+ register variants) patch tokens + CLS |
 | `bovw/cache.py` | Features computed once per (dataset, extractor, params) and stored as float16 `.npy` |
 | `bovw/vocab.py` | Optional PCA/whitening → (spherical) MiniBatch k-means on a descriptor sample |
-| `bovw/encode.py` | `hard`, `soft` (kernel codebook), `vlad` (intra-norm); power + L2 normalisation |
+| `bovw/encode.py` | `hard`, `soft` (kernel codebook; `knn`, `sigma_scale`), `vlad` (intra-norm); power + L2 normalisation |
 | `bovw/eval/` | Clustering: NMI, ARI, Hungarian accuracy over several seeds |
 | `bovw/timing.py` | Wall time, peak RSS, and peak GPU memory for every stage |
-| `bovw/sweep.py` | YAML-driven grid; appends each run to `<name>.jsonl`, rewrites a clean `<name>.csv`, skips finished runs; loads images only on a cache miss |
-| `bovw/plots.py` | Metric vs. K (small multiples), cost vs. metric, summary table |
+| `bovw/sweep.py` | YAML grid over extractor × K × vocab seed × assignment × encode-param variants (lists in `encode:` expand); per-extractor overrides; appends to `<name>.jsonl`, rewrites `<name>.csv`, skips finished runs; `select_best_variant` for tuning splits |
+| `bovw/plots.py` | `aggregate` over vocab seeds; metric vs. K, soft-assignment sensitivity, cost vs. metric, summary table |
 
 ## Quick start
 
-**Colab (recommended):** open `notebooks/00_p0_minimal_stl10.ipynb` and follow the cells.
+**Colab (recommended):**
+
+- `notebooks/00_p0_minimal_stl10.ipynb`: 2,000-image smoke run (~15 min)
+- `notebooks/01_p0_stl10_full.ipynb`: tune soft assignment on the train split, then the full 8,000-image test run with 3 vocabulary seeds
+
+Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`
 
 **Local, no GPU (smoke test):**
 

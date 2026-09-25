@@ -1,0 +1,45 @@
+# Step 2 of the full P0 STL-10 run: all 8,000 TEST images, 3 vocabulary seeds.
+# Soft-assignment params per extractor are filled in by the notebook from the
+# tuning run (p0_tune_soft_stl10train); the values below are placeholders.
+#
+# Runtime on a Colab T4 (2 vCPU): roughly 1-2 h, dominated by dense-SIFT
+# extraction (~17 min for 8,000 images on 2 threads) and SIFT encoding
+# (5.8 M descriptors). Needs ~7 GB RAM at peak (VLAD at K=256 on SIFT).
+# Every finished run is saved, so a disconnect only
+# costs the run in progress; re-run the cell to resume.
+
+name: p0_stl10_full
+
+dataset:
+  name: stl10
+  split: test           # 8,000 labelled images, 10 classes
+  n_per_class: null     # all of them
+  root: /content/data
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 224, batch_size: 64}
+    vocab: {pca_dim: 64, spherical: true}
+    encode: {soft: {knn: 5, sigma_scale: 1.0}}     # replaced by tuned values
+  - name: dense_sift
+    params: {resize: 224, step: 8, size: 16}
+    vocab: {pca_dim: null, spherical: false}
+    encode: {soft: {knn: 5, sigma_scale: 1.0}}     # replaced by tuned values
+
+vocab:
+  k: [64, 256, 1024]
+  seeds: [0, 1, 2]
+  max_descriptors: 200000
+
+assignments: [hard, soft, vlad]
+vlad_max_k: 256
+
+global_baseline: true
+
+eval:
+  clustering:
+    pca_dim: 128
+    seeds: [0, 1, 2]

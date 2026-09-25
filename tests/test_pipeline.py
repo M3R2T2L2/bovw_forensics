@@ -165,3 +165,56 @@ def test_load_results_skips_truncated_line(tmp_path):
     p = tmp_path / "x.jsonl"
     p.write_text('{"run_id": "a", "nmi": 1}\n{"run_id": "b", "n')
     assert list(load_results(p)["run_id"]) == ["a"]
+
+
+def test_expand_grid_and_labels():
+    from bovw.sweep import expand_grid, variant_label
+
+    g = expand_grid({"knn": [3, 5], "sigma_scale": 1.0})
+    assert g == [{"knn": 3, "sigma_scale": 1.0}, {"knn": 5, "sigma_scale": 1.0}]
+    assert expand_grid({}) == [{}]
+    assert variant_label({"sigma_scale": 0.5, "knn": 3}) == "knn=3,sigma_scale=0.5"
+
+
+def test_soft_sigma_scale_moves_toward_hard():
+    f, _ = _blobs(n_img=10, per_img=30)
+    v = build_vocabulary(f.desc, 6)
+    h = hard(f, v, power=1.0, l2=False)
+    sharp = soft(f, v, knn=5, sigma_scale=0.05, power=1.0, l2=False)
+    wide = soft(f, v, knn=5, sigma_scale=5.0, power=1.0, l2=False)
+    assert np.abs(sharp - h).sum() < np.abs(wide - h).sum()
+
+
+def test_parallel_extraction_matches_serial():
+    imgs, _ = data.load_synthetic(n_per_class=3, n_classes=2)
+    a = get_extractor("dense_sift", n_jobs=1)(imgs, progress=False)
+    b = get_extractor("dense_sift", n_jobs=2)(imgs, progress=False)
+    assert np.array_equal(a.desc, b.desc) and np.array_equal(a.offsets, b.offsets)
+
+
+def test_grid_seeds_overrides_and_selection(tmp_path, monkeypatch):
+    import bovw.sweep as S
+    from bovw import plots
+
+    rng = np.random.default_rng(1)
+    monkeypatch.setattr(S, "get_extractor", lambda name, **kw: (
+        lambda images, progress=True: LocalFeatures.from_list([rng.normal(size=(15, 6)) for _ in images])))
+    cfg = {"name": "g", "dataset": {"name": "synthetic", "n_per_class": 4, "n_classes": 3},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractors": [{"name": "a", "params": {"n_jobs": 4}},
+                          {"name": "b", "encode": {"soft": {"knn": 2}}}],
+           "vocab": {"k": [4], "seeds": [0, 1]}, "assignments": ["hard", "soft"],
+           "encode": {"soft": {"knn": [2, 3], "sigma_scale": [0.5, 1.0]}},
+           "eval": {"clustering": {"pca_dim": None, "seeds": [0]}}}
+    df = S.run(cfg, progress=False)
+    # a: (hard + 4 soft) x 2 seeds = 10 ; b: (hard + 2 soft) x 2 seeds = 6
+    assert (df.extractor == "a").sum() == 10 and (df.extractor == "b").sum() == 6
+    agg = plots.aggregate(df)
+    assert set(agg["n_vocab_seeds"]) == {2}
+    best = S.select_best_variant(df, "soft")
+    assert set(best) == {"a", "b"} and best["b"]["knn"] == 2
+    # n_jobs is runtime-only: not part of the cache key
+    assert not any("n_jobs" in p.name for p in (tmp_path / "c").iterdir())
+    import json
+    metas = [json.loads((d / "meta.json").read_text()) for d in (tmp_path / "c").iterdir() if d.is_dir()]
+    assert all("n_jobs" not in m["params"] for m in metas)
