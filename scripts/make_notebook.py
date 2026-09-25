@@ -27,17 +27,18 @@ from google.colab import drive
 drive.mount('/content/drive')"""),
     code("""# Get the code. Option A: GitHub (set REPO_URL once the repo is pushed).
 # Option B: upload bovw-forensics.zip to MyDrive/bovw-forensics/ and leave REPO_URL empty.
-REPO_URL = ""   # e.g. "https://github.com/<you>/bovw-forensics.git"
+REPO_URL = "https://github.com/M3R2T2L2/bovw_forensics.git"   # set to "" to install from the Drive zip instead
 ZIP_PATH = "/content/drive/MyDrive/bovw-forensics/bovw-forensics.zip"
 
 import os, shutil, subprocess, zipfile
-shutil.rmtree("/content/bovw-forensics", ignore_errors=True)
+shutil.rmtree("/content/bovw_forensics", ignore_errors=True)
 if REPO_URL:
-    subprocess.run(["git", "clone", "-q", REPO_URL, "/content/bovw-forensics"], check=True)
+    subprocess.run(["git", "clone", "-q", REPO_URL, "/content/bovw_forensics"], check=True)
 else:
     zipfile.ZipFile(ZIP_PATH).extractall("/content/")
+    os.rename("/content/bovw-forensics", "/content/bovw_forensics")
 
-%cd /content/bovw-forensics
+%cd /content/bovw_forensics
 !pip install -q -e ".[dev]"   # torch, torchvision, transformers come preinstalled on Colab"""),
     code("""# 30-second check that the torch-free core works in this runtime
 !python -m pytest -q"""),
