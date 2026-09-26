@@ -90,3 +90,12 @@ def test_ensure_archive_verifies_and_replaces_stale(tmp_path):
     with pytest.raises(RuntimeError, match="Checksum mismatch"):
         ad_data.ensure_archive(str(tmp_path / "other.tar.xz"), src.as_uri(), "0" * 64)
     assert not (tmp_path / "other.tar.xz").exists() and not (tmp_path / "other.tar.xz.part").exists()
+
+
+def test_ensure_archive_keeps_real_sized_mismatch(tmp_path):
+    f = tmp_path / "upload.tar.xz"
+    f.write_bytes(b"x" * 2000)
+    with pytest.raises(RuntimeError, match="does not match"):
+        ad_data.ensure_archive(str(f), "file:///nonexistent", "0" * 64, stub_bytes=1000)
+    assert f.exists()  # the user's file is left alone
+    assert ad_data.ensure_archive(str(f), "file:///nonexistent", None) == str(f)

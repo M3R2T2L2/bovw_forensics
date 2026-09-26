@@ -120,7 +120,8 @@ def sha256sum(path, chunk: int = 1 << 24) -> str:
     return h.hexdigest()
 
 
-def ensure_archive(path: str, url: str = MVTEC_URL, sha256: str = MVTEC_SHA256) -> str:
+def ensure_archive(path: str, url: str = MVTEC_URL, sha256: str | None = MVTEC_SHA256,
+                   stub_bytes: int = 100_000_000) -> str:
     """Download `url` to `path` only if `path` is missing or corrupt; verify the checksum.
 
     Downloads go to `<path>.part` and are renamed only after the checksum
@@ -134,7 +135,11 @@ def ensure_archive(path: str, url: str = MVTEC_URL, sha256: str = MVTEC_SHA256) 
     if os.path.isfile(path):
         if sha256 is None or sha256sum(path) == sha256:
             return path
-        os.remove(path)  # stale or partial file from an earlier failed attempt
+        if os.path.getsize(path) >= stub_bytes:
+            # Never delete a real-sized file (e.g. a manual upload): let the user decide.
+            raise RuntimeError(f"{path} does not match the expected SHA-256. If you uploaded it yourself and "
+                               "trust it, call ensure_archive(path, sha256=None); otherwise delete it and retry.")
+        os.remove(path)  # small stub left by an earlier failed download
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     part = path + ".part"
     if os.path.exists(part):
