@@ -102,3 +102,59 @@ def load_synthetic_ad(n_train: int = 40, n_good: int = 20, n_bad: int = 20, size
         masks.append(cv2.resize(full, (mask_size, mask_size), interpolation=cv2.INTER_NEAREST))
         types.append(kind)
     return ADSplit(train, imgs, np.array(labels), np.stack(masks), types)
+
+
+# Official archive; URL as used by anomalib (main branch, 2026), which tracks MVTec's share links.
+MVTEC_URL = ("https://www.mydrive.ch/shares/150996/b52ecdcbf521176e9db9c731f2304b27/"
+             "download/420938113-1629960298/mvtec_anomaly_detection.tar.xz")
+MVTEC_SHA256 = "cf4313b13603bec67abb49ca959488f7eedce2a9f7795ec54446c649ac98cd3d"
+
+
+def sha256sum(path, chunk: int = 1 << 24) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def ensure_archive(path: str, url: str = MVTEC_URL, sha256: str = MVTEC_SHA256) -> str:
+    """Download `url` to `path` only if `path` is missing or corrupt; verify the checksum.
+
+    Downloads go to `<path>.part` and are renamed only after the checksum
+    matches, so a failed or partial download never masquerades as the archive.
+    """
+    import os
+    import shutil
+    import subprocess
+    import urllib.request
+
+    if os.path.isfile(path):
+        if sha256 is None or sha256sum(path) == sha256:
+            return path
+        os.remove(path)  # stale or partial file from an earlier failed attempt
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    part = path + ".part"
+    if os.path.exists(part):
+        os.remove(part)
+    try:
+        if shutil.which("wget") and not url.startswith("file:"):
+            subprocess.run(["wget", "-q", "--show-progress", "-O", part, url], check=True)
+        else:
+            urllib.request.urlretrieve(url, part)
+    except Exception as e:
+        if os.path.exists(part):
+            os.remove(part)
+        raise RuntimeError(
+            f"Download failed ({e}). The link may have moved again: download "
+            "mvtec_anomaly_detection.tar.xz from https://www.mvtec.com/company/research/datasets/mvtec-ad "
+            f"and upload it to {path}.") from e
+    got = sha256sum(part) if sha256 else None
+    if sha256 and got != sha256:
+        os.remove(part)
+        raise RuntimeError(f"Checksum mismatch (got {got[:12]}..., expected {sha256[:12]}...). "
+                           f"Download the archive manually and upload it to {path}.")
+    os.replace(part, path)
+    return path

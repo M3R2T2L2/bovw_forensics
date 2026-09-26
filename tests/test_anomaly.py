@@ -74,3 +74,19 @@ def test_mvtec_loader_layout(tmp_path):
     assert len(s.train_images) == 1 and sorted(s.test_labels.tolist()) == [0, 1]
     assert s.test_masks.shape == (2, 16, 16) and s.test_masks.sum() > 0
     assert set(s.test_types) == {"good", "broken"}
+
+
+def test_ensure_archive_verifies_and_replaces_stale(tmp_path):
+    import hashlib
+
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"mvtec-archive-bytes")
+    good = hashlib.sha256(src.read_bytes()).hexdigest()
+    dst = tmp_path / "drive" / "mvtec.tar.xz"
+    dst.parent.mkdir()
+    dst.write_bytes(b"")  # empty file left by a failed wget
+    ad_data.ensure_archive(str(dst), src.as_uri(), good)
+    assert dst.read_bytes() == b"mvtec-archive-bytes" and not (tmp_path / "drive" / "mvtec.tar.xz.part").exists()
+    with pytest.raises(RuntimeError, match="Checksum mismatch"):
+        ad_data.ensure_archive(str(tmp_path / "other.tar.xz"), src.as_uri(), "0" * 64)
+    assert not (tmp_path / "other.tar.xz").exists() and not (tmp_path / "other.tar.xz.part").exists()
