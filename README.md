@@ -17,6 +17,8 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 | `bovw/vocab.py` | Optional PCA/whitening → (spherical) MiniBatch k-means on a descriptor sample |
 | `bovw/encode.py` | `hard`, `soft` (kernel codebook; `knn`, `sigma_scale`), `vlad` (intra-norm); power + L2 normalisation |
 | `bovw/eval/` | Clustering: NMI, ARI, Hungarian accuracy over several seeds |
+| `bovw/anomaly.py` | Unsupervised anomaly detection: PatchCore-style patch kNN, CLS kNN, codebook word distance (raw and radius-normalised), histogram kNN; image/pixel AUROC, per-defect-type AUROC; GPU kNN with NumPy fallback |
+| `bovw/ad_data.py` | MVTec AD loader (images, labels, masks) and a synthetic defect set for tests |
 | `bovw/timing.py` | Wall time, peak RSS, and peak GPU memory for every stage |
 | `bovw/sweep.py` | YAML grid over extractor × K × vocab seed × assignment × encode-param variants (lists in `encode:` expand); per-extractor overrides; appends to `<name>.jsonl`, rewrites `<name>.csv`, skips finished runs; `select_best_variant` for tuning splits |
 | `bovw/plots.py` | `aggregate` over vocab seeds; metric vs. K, soft-assignment sensitivity, cost vs. metric, summary table |
@@ -27,6 +29,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 
 - `notebooks/00_p0_minimal_stl10.ipynb`: 2,000-image smoke run (~15 min)
 - `notebooks/01_p0_stl10_full.ipynb`: tune soft assignment on the train split, then the full 8,000-image test run with 3 vocabulary seeds
+- `notebooks/02_p0_anomaly_mvtec.ipynb`: anomaly detection on MVTec AD (CC BY-NC-SA 4.0: accept the licence first)
 
 Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`
 
@@ -51,7 +54,8 @@ python -m bovw.sweep configs/smoke_synthetic.yaml
 
 - ORB binary descriptors are unpacked to 0/1 floats and clustered with Euclidean k-means, which approximates Hamming k-majority.
 - VLAD dimension is K × d; `vlad_max_k` (default 256) caps it.
-- Only the clustering task is wired up so far. Retrieval and anomaly detection come next.
+- Clustering and anomaly detection are wired up; retrieval (Revisited Oxford/Paris) is next.
+- Anomaly scoring uses the full normal patch bank for `patch_knn` (exact, no coreset): an upper bound for PatchCore-style methods.
 
 ## License
 

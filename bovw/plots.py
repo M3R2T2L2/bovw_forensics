@@ -224,3 +224,53 @@ def soft_sensitivity(df: pd.DataFrame, metric: str = "nmi"):
     fig.suptitle(f"Soft assignment sensitivity ({metric.upper()})", x=0.01, ha="left", color=INK, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     return fig
+
+
+AD_COLORS = {"codebook_dist": "#2a78d6", "codebook_norm": "#eb6834", "hist_knn": "#1baf7a"}
+AD_LABELS = {"codebook_dist": "word distance", "codebook_norm": "word distance / radius",
+             "hist_knn": "histogram kNN", "patch_knn": "patch kNN (PatchCore-style)", "global_knn": "CLS kNN"}
+
+
+def anomaly_vs_k(df: pd.DataFrame, metrics: tuple = ("image_auroc", "pixel_auroc")):
+    """Mean AUROC over categories vs vocabulary size; rows = extractor, cols = metric.
+
+    Codebook methods are lines; baselines that do not depend on K are horizontal
+    reference lines (dashed: patch kNN, dotted: CLS kNN). Five series share one
+    legend; direct labels are omitted because the method names are long.
+    """
+    d = df.copy()
+    mean = d.groupby(["extractor", "method", "k"])[list(metrics)].mean().reset_index()  # over categories + seeds
+    exts = list(dict.fromkeys(d["extractor"]))
+    fig, axes = plt.subplots(len(exts), len(metrics), figsize=(4.6 * len(metrics), 3.4 * len(exts)), squeeze=False)
+    fig.patch.set_facecolor("#fcfcfb")
+    for r, ex in enumerate(exts):
+        for c, met in enumerate(metrics):
+            ax = axes[r][c]
+            _style(ax)
+            m = mean[mean["extractor"] == ex]
+            for meth, color in AD_COLORS.items():
+                s = m[m["method"] == meth].sort_values("k").dropna(subset=[met])
+                if s.empty:
+                    continue
+                ax.plot(s["k"], s[met], color=color, lw=2, marker="o", ms=5, label=AD_LABELS[meth])
+            for meth, ls in (("patch_knn", "--"), ("global_knn", ":")):
+                s = m[m["method"] == meth].dropna(subset=[met])
+                if not s.empty:
+                    ax.axhline(float(s[met].iloc[0]), color=MUTED, lw=1.5, ls=ls, label=AD_LABELS[meth])
+            ks = sorted(m.loc[m["k"] > 0, "k"].unique())
+            if ks:
+                ax.set_xscale("log", base=2)
+                ax.set_xticks(ks, [str(int(k)) for k in ks])
+            ax.set_title(f"{ex} · {met.replace('_', ' ')}", loc="left", color=INK, fontsize=10.5)
+            if r == len(exts) - 1:
+                ax.set_xlabel("Vocabulary size K", color=INK_2, fontsize=9)
+            if c == 0:
+                ax.set_ylabel("Mean AUROC over categories", color=INK_2, fontsize=9)
+    seen = {}
+    for ax in axes.ravel():
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            seen.setdefault(lab, h)
+    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=min(len(seen), 5),
+               frameon=False, fontsize=9, bbox_to_anchor=(0.5, 1.0))
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    return fig

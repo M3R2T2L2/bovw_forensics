@@ -1,0 +1,43 @@
+# P0 task 3: unsupervised anomaly detection on MVTec AD (15 categories).
+# Fit on normal training images only; report image- and pixel-level AUROC.
+#
+# Runtime on a Colab T4 (2 vCPU), all 15 categories: roughly 1-1.5 h
+#   DINOv2-S @ 448 px: extraction ~5 min, codebooks ~1.5 min per category (CPU k-means)
+#   dense SIFT @ 224 px: extraction ~20 min on CPU
+# Every finished run is saved; re-run the cell after a disconnect to resume.
+#
+# MVTec AD is CC BY-NC-SA 4.0 (non-commercial): accept the licence at
+# https://www.mvtec.com/company/research/datasets/mvtec-ad before downloading.
+
+name: p0_anomaly_mvtec
+
+data:
+  name: mvtec
+  root: /content/mvtec
+  categories: all          # or a list, e.g. [bottle, carpet, screw] for a quick first pass
+  size: 448                # images are resized to size x size before feature extraction
+  mask_size: 256           # pixel AUROC is computed at this resolution
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 448, batch_size: 32}   # 32 x 32 patch grid
+  - name: dense_sift
+    params: {resize: 224, step: 8, size: 16}    # 27 x 27 grid
+
+normalize: true            # L2-normalise patch features (cosine geometry)
+smoothing_sigma: 4         # Gaussian smoothing of pixel maps, as in PatchCore
+
+methods:
+  patch_knn: {}            # PatchCore-style exact kNN over all normal patches (baseline)
+  global_knn: {}           # CLS-embedding kNN (baseline; foundation backbones only)
+  codebook:
+    k: [64, 256, 1024]
+    scores: [codebook_dist, codebook_norm, hist_knn]
+
+vocab:
+  seeds: [0]
+  max_descriptors: 200000
+  spherical: true

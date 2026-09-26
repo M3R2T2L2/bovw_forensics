@@ -152,7 +152,78 @@ df[[c for c in cost_cols if c in df]].round(2)"""),
 ]
 
 
+cells_02 = [
+    md("""# P0 · Anomaly detection on MVTec AD
+
+Unsupervised: every model sees only **normal** training images. Scored per category, then averaged.
+
+| Method | What it scores |
+|---|---|
+| `patch_knn` | PatchCore-style baseline: distance to the nearest of *all* normal patches |
+| `global_knn` | CLS-embedding baseline (image level only) |
+| `codebook_dist` | distance to the nearest of K visual words |
+| `codebook_norm` | that distance divided by the word's own radius |
+| `hist_knn` | bag-of-words histogram distance (image level only) |
+
+**Licence:** MVTec AD is CC BY-NC-SA 4.0 (non-commercial). Accept it at
+https://www.mvtec.com/company/research/datasets/mvtec-ad before downloading.
+
+**Runtime (T4, 2 vCPU):** about 1–1.5 h for all 15 categories, plus a one-time ~5 GB download.
+Finished runs are saved on Drive; after a disconnect, run *Setup* and *Data* again, then the run cell."""),
+    *setup_cells(),
+
+    md("## 2 · Data\nThe archive is kept on Drive so it downloads only once; each new runtime extracts it locally (~3–5 min)."),
+    code("""import os, subprocess
+DRIVE_TAR = "/content/drive/MyDrive/bovw-forensics/data/mvtec_anomaly_detection.tar.xz"
+LOCAL_ROOT = "/content/mvtec"
+
+# Set to True only after accepting the licence on the MVTec page above.
+I_ACCEPT_MVTEC_LICENCE = False
+MVTEC_URL = ("https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/"
+             "download/420938113-1629952094/mvtec_anomaly_detection.tar.xz")  # official archive (as used by anomalib)
+
+if not os.path.isfile(DRIVE_TAR):
+    if not I_ACCEPT_MVTEC_LICENCE:
+        raise SystemExit("Accept the MVTec AD licence, then set I_ACCEPT_MVTEC_LICENCE = True "
+                         "(or upload mvtec_anomaly_detection.tar.xz to MyDrive/bovw-forensics/data/).")
+    os.makedirs(os.path.dirname(DRIVE_TAR), exist_ok=True)
+    subprocess.run(["wget", "-q", "--show-progress", "-O", DRIVE_TAR, MVTEC_URL], check=True)
+
+if not os.path.isdir(f"{LOCAL_ROOT}/bottle"):
+    os.makedirs(LOCAL_ROOT, exist_ok=True)
+    subprocess.run(["tar", "-xf", DRIVE_TAR, "-C", LOCAL_ROOT], check=True)
+print(sorted(os.listdir(LOCAL_ROOT)))"""),
+
+    md("## 3 · Run\nStart with three categories to check everything end to end, then set `categories = \"all\"`."),
+    code("""from bovw.sweep import load_config
+from bovw import anomaly, plots
+
+cfg = load_config("configs/p0_anomaly_mvtec.yaml")
+cfg["data"]["root"] = LOCAL_ROOT
+cfg["data"]["categories"] = ["bottle", "carpet", "screw"]   # quick pass; then "all"
+df = anomaly.run(cfg)"""),
+
+    md("## 4 · Results"),
+    code("""anomaly.summary(df, "image_auroc").round(3)"""),
+    code("""anomaly.summary(df, "pixel_auroc").round(3)"""),
+    code("""fig = plots.anomaly_vs_k(df)
+fig.savefig(f"{cfg['results_dir']}/{cfg['name']}_auroc_vs_k.png", dpi=200, bbox_inches="tight")"""),
+    code("""# Compute budget per method (seconds, mean over categories)
+cols = [c for c in ["vocab_seconds", "score_seconds", "score_peak_gpu_mb", "score_peak_rss_mb"] if c in df]
+df.groupby(["extractor", "method", "k"])[cols].mean().round(1)"""),
+
+    md("""## 5 · What to check
+
+1. **Codebook vs. full patch bank:** how close does `codebook_dist` get to `patch_knn`, and at what K? The bank has ~300k patches per category; K is at most 1,024.
+2. **Radius normalisation:** does `codebook_norm` beat plain word distance, especially on pixel AUROC?
+3. **Image-level methods:** do `hist_knn` / `global_knn` hold up without localisation?
+4. **Per-defect-type AUROC** is stored in `image_auroc_by_type`, useful later for P3 (not all anomalies are equal)."""),
+]
+
+
 def write(cells, name):
+    for i, c in enumerate(cells):
+        c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
     nb = nbf.v4.new_notebook(cells=cells, metadata={
         "kernelspec": {"name": "python3", "display_name": "Python 3"},
         "accelerator": "GPU", "colab": {"provenance": [], "gpuType": "T4"}})
@@ -163,3 +234,4 @@ def write(cells, name):
 
 write(cells_00, "00_p0_minimal_stl10.ipynb")
 write(cells_01, "01_p0_stl10_full.ipynb")
+write(cells_02, "02_p0_anomaly_mvtec.ipynb")
