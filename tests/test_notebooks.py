@@ -1,0 +1,29 @@
+"""Guard the generated notebooks: each must contain its own run cell and no other's."""
+import json
+from pathlib import Path
+
+NB = Path(__file__).resolve().parents[1] / "notebooks"
+
+
+def _code(name):
+    nb = json.loads((NB / name).read_text())
+    return "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
+
+
+def test_notebook_00_stl10_minimal():
+    src = _code("00_p0_minimal_stl10.ipynb")
+    assert "from bovw.sweep import load_config, run" in src and "df = run(cfg)" in src
+    assert "anomaly" not in src
+
+
+def test_notebook_01_stl10_full():
+    src = _code("01_p0_stl10_full.ipynb")
+    assert "select_best_variant" in src and "p0_stl10_full.yaml" in src
+    assert "anomaly" not in src
+
+
+def test_notebook_02_anomaly():
+    src = _code("02_p0_anomaly_mvtec.ipynb")
+    assert "df = anomaly.run(cfg)" in src and "ad_data.ensure_archive(DRIVE_TAR)" in src
+    assert "plots.anomaly_vs_k" in src
+    assert "df = run(cfg)" not in src and "metric_vs_k" not in src  # no STL-10 cells spliced in
