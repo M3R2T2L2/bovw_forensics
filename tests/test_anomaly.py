@@ -58,6 +58,30 @@ def test_synthetic_end_to_end(tmp_path):
     assert len(anomaly.run(cfg, progress=False)) == len(df)  # resume: nothing recomputed
 
 
+def test_greedy_coreset_is_nested_kcenter():
+    rng = np.random.default_rng(0)
+    x = np.concatenate([rng.normal(c, 0.01, (200, 8)) for c in (0, 5, 10, 15)]).astype(np.float32)
+    idx = anomaly.greedy_coreset(x, 4, seed=1, proj_dim=0)
+    assert len(set(idx)) == 4
+    assert sorted(np.round(x[idx, 0] / 5).astype(int)) == [0, 1, 2, 3]  # one pick per cluster
+    assert list(anomaly.greedy_coreset(x, 2, seed=1, proj_dim=0)) == list(idx[:2])  # nested
+    assert len(anomaly.greedy_coreset(x[:3], 10, seed=0)) == 3  # m capped at n
+
+
+def test_subsample_baselines(tmp_path):
+    cfg = {"name": "t", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                 "n_train": 20, "n_good": 10, "n_bad": 10},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+           "methods": {"subsample": {"sizes": [8, 32], "methods": ["coreset_knn", "random_knn"]}},
+           "vocab": {"seeds": [0, 1]}}
+    df = anomaly.run(cfg, progress=False)
+    assert len(df) == 2 * 2 * 2
+    assert set(df["bank_size"]) == {8, 32}
+    assert df["pixel_auroc"].notna().all()
+    assert len(anomaly.run(cfg, progress=False)) == len(df)  # resume
+
+
 def test_mvtec_loader_layout(tmp_path):
     import cv2
 

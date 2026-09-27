@@ -36,6 +36,9 @@ methods:
   codebook:
     k: [64, 256, 1024]
     scores: [codebook_dist, codebook_norm, hist_knn]
+  subsample:               # matched-memory baselines: keep M normal patches, M = K
+    sizes: [64, 256, 1024]
+    methods: [coreset_knn, random_knn]   # PatchCore greedy coreset; uniform sample
 
 vocab:
   seeds: [0, 1, 2]        # finished seeds are skipped on rerun

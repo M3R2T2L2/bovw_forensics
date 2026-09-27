@@ -19,6 +19,9 @@ Methods
                    discrete values tie across images and it scores AUROC 0.5.)
   hist_knn         Image-level: nearest-neighbour distance between bag-of-words
                    histograms (signed-sqrt + L2, i.e. Hellinger-like).
+  coreset_knn      Matched-memory baseline: PatchCore's greedy k-center coreset of M
+                   normal patches (M = K), then nearest-neighbour distance to it.
+  random_knn       Matched-memory baseline: M normal patches sampled uniformly.
 
 Pixel maps: patch scores on the feature grid, bilinear upsampling to the mask
 size, Gaussian smoothing (sigma=4, as in PatchCore). Image score: max patch score.
@@ -46,6 +49,7 @@ from .vocab import build_vocabulary, l2n
 PATCH_METHODS = ("patch_knn", "codebook_dist", "codebook_norm")
 IMAGE_METHODS = ("global_knn", "hist_knn")
 CODEBOOK_METHODS = ("codebook_dist", "codebook_norm", "hist_knn")
+SUBSAMPLE_METHODS = ("coreset_knn", "random_knn")
 HANDCRAFTED = {"sift", "dense_sift", "orb"}  # no global embedding
 
 
@@ -94,6 +98,48 @@ def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk
             np.minimum(best, d.min(1), out=best)
         out[i:i + q_chunk] = np.sqrt(np.maximum(best, 0))
     return out
+
+
+def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, chunk: int = 262144) -> np.ndarray:
+    """Indices of a greedy k-center coreset (PatchCore, Roth et al. 2022).
+
+    Features are first mapped by a Gaussian random projection to `proj_dim`
+    dimensions (as in PatchCore) to speed up the distance updates. Greedy
+    selection is nested: the first m' < m indices are the size-m' coreset.
+    """
+    n = len(x)
+    m = min(m, n)
+    rng = np.random.default_rng(seed)
+    d = x.shape[1]
+    if proj_dim and proj_dim < d:
+        proj = (rng.standard_normal((d, proj_dim)) / np.sqrt(proj_dim)).astype(np.float32)
+    else:
+        proj = None
+    first = int(rng.integers(n))
+    torch = _torch_cuda()
+    if torch is not None:
+        z = torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)).cuda()
+        if proj is not None:
+            z = z @ torch.from_numpy(proj).cuda()
+        mind = torch.full((n,), float("inf"), device="cuda")
+        sel = [first]
+        for _ in range(m - 1):
+            c = z[sel[-1]]
+            mind = torch.minimum(mind, ((z - c) ** 2).sum(1))
+            sel.append(int(mind.argmax()))
+        del z, mind
+        torch.cuda.empty_cache()
+        return np.array(sel, np.int64)
+    z = np.empty((n, proj_dim if proj is not None else d), np.float32)
+    for i in range(0, n, chunk):
+        blk = np.asarray(x[i:i + chunk], np.float32)
+        z[i:i + chunk] = blk @ proj if proj is not None else blk
+    mind = np.full(n, np.inf, np.float32)
+    sel = [first]
+    for _ in range(m - 1):
+        np.minimum(mind, ((z - z[sel[-1]]) ** 2).sum(1), out=mind)
+        sel.append(int(mind.argmax()))
+    return np.array(sel, np.int64)
 
 
 # --------------------------------------------------------------------------- scoring helpers
@@ -236,6 +282,9 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     vocab_cfg = dict(cfg.get("vocab", {}))
     seeds = vocab_cfg.pop("seeds", None) or [vocab_cfg.get("seed", 0)]
     vocab_cfg.pop("seed", None)
+    sub_cfg = methods.get("subsample", {})
+    sub_sizes = sorted(sub_cfg.get("sizes", ks)) if sub_cfg else []
+    sub_methods = [m for m in SUBSAMPLE_METHODS if m in sub_cfg.get("methods", SUBSAMPLE_METHODS)] if sub_cfg else []
     normalize = cfg.get("normalize", True)
     sigma = cfg.get("smoothing_sigma", 4.0)
     mask_size = data_cfg.get("mask_size", 256)
@@ -250,7 +299,9 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
             baselines = [m for m in ("patch_knn", "global_knn") if m in methods
                          and not (m == "global_knn" and ex_name in HANDCRAFTED)]
             todo_ids = ([_run_id(cfg["name"], cat, ex_name, m, 0, 0) for m in baselines]
-                        + [_run_id(cfg["name"], cat, ex_name, m, k, s) for m in cb_methods for k in ks for s in seeds])
+                        + [_run_id(cfg["name"], cat, ex_name, m, k, s) for m in cb_methods for k in ks for s in seeds]
+                        + [_run_id(cfg["name"], cat, ex_name, m, k, s)
+                           for m in sub_methods for k in sub_sizes for s in seeds])
             if all(r in done for r in todo_ids):
                 continue
 
@@ -302,8 +353,33 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         img = min_dist(_norm(te.global_, normalize), _norm(tr.global_, normalize))
                     record(rid, "global_knn", 0, 0, img, None, None, t)
 
+            te_desc = _norm(te.desc, normalize)
+            for seed in seeds:
+                ids = {(m, k): _run_id(cfg["name"], cat, ex_name, m, k, seed) for m in sub_methods for k in sub_sizes}
+                if all(i in done for i in ids.values()):
+                    continue
+                picks = {}
+                if "coreset_knn" in sub_methods:
+                    ct: dict = {}
+                    with budget(ct, "vocab"):  # selection cost, reported like vocabulary building
+                        order = greedy_coreset(tr_desc, max(sub_sizes), seed=seed)
+                    picks["coreset_knn"] = (order, ct)
+                if "random_knn" in sub_methods:
+                    order = np.random.default_rng(seed).permutation(len(tr_desc))[:max(sub_sizes)]
+                    picks["random_knn"] = (order, {})
+                for m, (order, sel_t) in picks.items():
+                    for k in sub_sizes:  # nested: the first k picks are the size-k subset
+                        rid = ids[(m, k)]
+                        if rid in done:
+                            continue
+                        t = dict(sel_t)
+                        with budget(t, "score"):
+                            ps = min_dist(te_desc, tr_desc[np.sort(order[:k])])
+                            maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma)
+                        record(rid, m, k, seed, img, maps, {"bank_size": int(min(k, len(tr_desc)))}, t)
+
             tr_n = LocalFeatures(desc=tr_desc, offsets=tr.offsets)
-            te_n = LocalFeatures(desc=_norm(te.desc, normalize), offsets=te.offsets)
+            te_n = LocalFeatures(desc=te_desc, offsets=te.offsets)
             for k in ks:
                 for seed in seeds:
                     ids = {m: _run_id(cfg["name"], cat, ex_name, m, k, seed) for m in cb_methods}
@@ -332,7 +408,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                             img = min_dist(hard(te_n, vocab), hard(tr_n, vocab))
                         record(ids["hist_knn"], "hist_knn", k, seed, img, None, extra, t)
                     del vocab
-            del tr, te, tr_desc, tr_n, te_n
+            del tr, te, tr_desc, te_desc, tr_n, te_n
             gc.collect()
 
     df = load_results(jsonl)

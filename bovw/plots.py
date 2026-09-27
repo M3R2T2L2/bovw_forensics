@@ -226,9 +226,11 @@ def soft_sensitivity(df: pd.DataFrame, metric: str = "nmi"):
     return fig
 
 
-AD_COLORS = {"codebook_dist": "#2a78d6", "codebook_norm": "#eb6834", "hist_knn": "#1baf7a"}
+AD_COLORS = {"codebook_dist": "#2a78d6", "codebook_norm": "#eb6834", "hist_knn": "#1baf7a",
+             "coreset_knn": "#8a5cc2", "random_knn": "#a0a39b"}
 AD_LABELS = {"codebook_dist": "word distance", "codebook_norm": "word distance / radius",
-             "hist_knn": "histogram kNN", "patch_knn": "patch kNN (PatchCore-style)", "global_knn": "CLS kNN"}
+             "hist_knn": "histogram kNN", "patch_knn": "patch kNN (PatchCore-style)", "global_knn": "CLS kNN",
+             "coreset_knn": "coreset kNN (M = K)", "random_knn": "random-sample kNN (M = K)"}
 
 
 def anomaly_vs_k(df: pd.DataFrame, metrics: tuple = ("image_auroc", "pixel_auroc")):
@@ -270,7 +272,7 @@ def anomaly_vs_k(df: pd.DataFrame, metrics: tuple = ("image_auroc", "pixel_auroc
     for ax in axes.ravel():
         for h, lab in zip(*ax.get_legend_handles_labels()):
             seen.setdefault(lab, h)
-    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=min(len(seen), 5),
+    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=min(len(seen), 4),
                frameon=False, fontsize=9, bbox_to_anchor=(0.5, 1.0))
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     return fig

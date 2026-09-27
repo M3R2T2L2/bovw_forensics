@@ -164,11 +164,13 @@ Unsupervised: every model sees only **normal** training images. Scored per categ
 | `codebook_dist` | distance to the nearest of K visual words |
 | `codebook_norm` | that distance divided by the word's own radius |
 | `hist_knn` | bag-of-words histogram distance (image level only) |
+| `coreset_knn` | matched memory: PatchCore greedy coreset of M = K normal patches |
+| `random_knn` | matched memory: M = K normal patches sampled at random |
 
 **Licence:** MVTec AD is CC BY-NC-SA 4.0 (non-commercial). Accept it at
 https://www.mvtec.com/company/research/datasets/mvtec-ad before downloading.
 
-**Runtime (T4, 2 vCPU):** about 1–1.5 h for all 15 categories, plus a one-time ~5 GB download.
+**Runtime (T4, 2 vCPU):** about 1–1.5 h for all 15 categories from scratch (much less when features are cached), plus a one-time ~5 GB download.
 Finished runs are saved on Drive; after a disconnect, run *Setup* and *Data* again, then the run cell."""),
     *setup_cells(),
 
@@ -213,6 +215,7 @@ df.groupby(["extractor", "method", "k"])[cols].mean().round(1)"""),
 
     md("""## 5 · What to check
 
+1. **Codebook vs. matched-memory baselines:** at the same number of stored vectors (M = K), does `codebook_dist` beat `coreset_knn` and `random_knn`?
 1. **Codebook vs. full patch bank:** how close does `codebook_dist` get to `patch_knn`, and at what K? The bank has ~300k patches per category; K is at most 1,024.
 2. **Radius normalisation:** does `codebook_norm` beat plain word distance, especially on pixel AUROC?
 3. **Image-level methods:** do `hist_knn` / `global_knn` hold up without localisation?
