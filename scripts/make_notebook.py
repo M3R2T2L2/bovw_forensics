@@ -199,7 +199,7 @@ from bovw import anomaly, plots
 
 cfg = load_config("configs/p0_anomaly_mvtec.yaml")
 cfg["data"]["root"] = LOCAL_ROOT
-cfg["data"]["categories"] = ["bottle", "carpet", "screw"]   # quick pass; then "all"
+cfg["data"]["categories"] = "all"   # or e.g. ["bottle", "carpet", "screw"] for a quick pass
 df = anomaly.run(cfg)"""),
 
     md("## 4 · Results"),

@@ -38,6 +38,6 @@ methods:
     scores: [codebook_dist, codebook_norm, hist_knn]
 
 vocab:
-  seeds: [0]
+  seeds: [0, 1, 2]        # finished seeds are skipped on rerun
   max_descriptors: 200000
   spherical: true
