@@ -276,3 +276,71 @@ def anomaly_vs_k(df: pd.DataFrame, metrics: tuple = ("image_auroc", "pixel_auroc
                frameon=False, fontsize=9, bbox_to_anchor=(0.5, 1.0))
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     return fig
+
+
+def false_alarms(results_dir, cfg_name: str, category: str, images: list, labels: np.ndarray,
+                 methods=(("codebook_dist", 1024), ("coreset_knn", 1024)), extractor: str = "dinov2_s",
+                 seed: int = 0, n: int = 4):
+    """The normal test images each method ranks as most anomalous, with both methods' maps.
+
+    Columns: image, then one map per method. Each map is divided by that method's
+    99th-percentile normal-pixel score, so 1.0 means "as high as the noisiest 1%
+    of normal pixels" in both columns. A cross marks the max-scoring location.
+    """
+    from pathlib import Path
+
+    from .sweep import _run_id
+
+    def rid(meth, k):
+        return _run_id(cfg_name, category, extractor, meth, k, 0 if meth == "patch_knn" else seed).replace("|", "__")
+
+    labels = np.asarray(labels)
+    good = np.where(labels == 0)[0]
+    maps, scores = {}, {}
+    for meth, k in methods:
+        maps[meth] = np.load(Path(results_dir) / "maps" / f"{rid(meth, k)}.npy").astype(np.float32)
+        scores[meth] = np.load(Path(results_dir) / "scores" / f"{rid(meth, k)}.npy")
+    picks = []
+    for meth, _ in methods:  # worst false alarms of each method, deduplicated
+        r = scores[meth][good]
+        for i in good[np.argsort(-r)]:
+            if i not in picks:
+                picks.append(int(i))
+                break
+        if len(picks) >= n:
+            break
+    first = methods[0][0]
+    for i in good[np.argsort(-scores[first][good])]:
+        if len(picks) >= n:
+            break
+        if int(i) not in picks:
+            picks.append(int(i))
+    scale = {}
+    for meth in maps:
+        neg = maps[meth][labels == 0]
+        scale[meth] = float(np.quantile(neg, 0.99))
+    ncol = 1 + len(methods)
+    fig, axes = plt.subplots(len(picks), ncol, figsize=(2.6 * ncol, 2.6 * len(picks)), squeeze=False)
+    fig.patch.set_facecolor("#fcfcfb")
+    for r, i in enumerate(picks):
+        ax = axes[r][0]
+        ax.imshow(images[i])
+        ax.set_axis_off()
+        if r == 0:
+            ax.set_title("normal test image", fontsize=9, color=INK, loc="left")
+        for c, (meth, k) in enumerate(methods, start=1):
+            ax = axes[r][c]
+            mp = maps[meth][i] / scale[meth]
+            ax.imshow(images[i], alpha=1.0)
+            ax.imshow(mp, cmap="magma", vmin=0.5, vmax=1.5, alpha=0.6,
+                      extent=(0, images[i].shape[1], images[i].shape[0], 0))
+            y, x = np.unravel_index(mp.argmax(), mp.shape)
+            sy, sx = images[i].shape[0] / mp.shape[0], images[i].shape[1] / mp.shape[1]
+            ax.plot(x * sx, y * sy, "x", color="#ffffff", ms=9, mew=2)
+            rank = int((scores[meth] >= scores[meth][i]).sum())
+            ax.set_title(f"{AD_LABELS.get(meth, meth)} · rank {rank}/{len(labels)}", fontsize=8.5, color=INK, loc="left")
+            ax.set_axis_off()
+    fig.suptitle(f"{category}: normal images ranked most anomalous (maps / normal p99)", fontsize=10,
+                 color=INK, x=0.01, ha="left")
+    fig.tight_layout()
+    return fig

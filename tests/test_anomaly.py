@@ -82,6 +82,67 @@ def test_subsample_baselines(tmp_path):
     assert len(anomaly.run(cfg, progress=False)) == len(df)  # resume
 
 
+def test_aupro_and_dprime():
+    masks = np.zeros((2, 32, 32), np.uint8)
+    masks[1, 4:8, 4:8] = 1          # small region
+    masks[1, 16:30, 16:30] = 1      # large region
+    perfect = masks.astype(np.float32) + 0.01 * np.random.default_rng(0).random(masks.shape)
+    assert anomaly.aupro(masks, perfect) > 0.99
+    half = perfect.copy()
+    half[1, 4:8, 4:8] = 0.0          # miss the small region entirely
+    # pixel AUROC barely notices (16 of 212 defect pixels), AUPRO halves
+    assert anomaly.aupro(masks, half) == pytest.approx(0.5, abs=0.02)
+    assert anomaly.pixel_dprime(masks, perfect) > 10
+    assert np.isnan(anomaly.aupro(np.zeros((1, 8, 8)), np.zeros((1, 8, 8))))
+
+
+def test_topk_image_scores():
+    ps = np.array([[1, 2, 3, 10], [4, 4, 4, 4]], np.float32).reshape(-1)
+    assert list(anomaly.topk_image_scores(ps, 2, 1)) == [10, 4]
+    assert list(anomaly.topk_image_scores(ps, 2, 2)) == [6.5, 4]
+
+
+def test_v2_run_metrics_and_vocab_cache(tmp_path):
+    cfg = {"name": "t2", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                  "n_train": 20, "n_good": 10, "n_bad": 10},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+           "region_metrics": True, "image_topk": [1, 3], "save_maps_for": ["tex"], "cache_vocab": True,
+           "methods": {"patch_knn": {}, "codebook": {"k": [16], "scores": ["codebook_dist"]},
+                       "subsample": {"sizes": [16], "methods": ["coreset_knn"]}},
+           "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}}
+    df = anomaly.run(cfg, progress=False)
+    assert set(df.method) == {"patch_knn", "codebook_dist", "coreset_knn"}
+    for c in ["aupro", "pixel_dprime", "image_auroc_top1", "image_auroc_top3"]:
+        assert df[c].notna().all(), c
+    assert (df["image_auroc_top1"] == df["image_auroc"]).all()  # top-1 mean = max
+    assert len(list((tmp_path / "r" / "maps").glob("*.npy"))) == 3
+    assert len(list((tmp_path / "c" / "vocab").glob("*.pkl"))) == 1
+    # a fresh results dir reuses the cached vocabulary
+    cfg2 = {**cfg, "name": "t3"}
+    df2 = anomaly.run(cfg2, progress=False)
+    assert df2.loc[df2.method == "codebook_dist", "vocab_cache_hit"].iloc[0] == True  # noqa: E712
+    assert np.allclose(df2.sort_values("method").image_auroc, df.sort_values("method").image_auroc)
+
+    t = anomaly.followup_table(df)
+    assert ("hybrid", 16) in t.index
+    assert t.loc[("hybrid", 16), "img"] == pytest.approx(t.loc[("coreset_knn", 16), "img"])
+    assert t.loc[("hybrid", 16), "aupro"] == pytest.approx(t.loc[("codebook_dist", 16), "aupro"])
+
+    from bovw import plots
+    labels = np.array([0] * 10 + [1] * 10)
+    masks = np.zeros((20, 64, 64), np.uint8)
+    masks[10:, 10:20, 10:20] = 1
+    sp = anomaly.normal_pixel_spread(tmp_path / "r", "t2", "tex", masks,
+                                     methods=(("codebook_dist", 16), ("coreset_knn", 16), ("patch_knn", 0)),
+                                     extractor="dense_sift")
+    assert len(sp) == 3 and (sp.rel_iqr > 0).all()
+    imgs = [np.zeros((128, 128, 3), np.uint8)] * 20
+    fig = plots.false_alarms(tmp_path / "r", "t2", "tex", imgs, labels,
+                             methods=(("codebook_dist", 16), ("coreset_knn", 16)), extractor="dense_sift", n=3)
+    assert len(fig.axes) == 9
+
+
 def test_mvtec_loader_layout(tmp_path):
     import cv2
 

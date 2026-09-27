@@ -169,7 +169,57 @@ def _auroc(y, s) -> float:
     return float(roc_auc_score(y, s)) if 0 < y.sum() < len(y) else float("nan")
 
 
-def metrics(labels, image_scores, types, masks=None, maps=None) -> dict:
+def aupro(masks: np.ndarray, maps: np.ndarray, fpr_limit: float = 0.3, steps: int = 301) -> float:
+    """Area under the per-region-overlap curve up to `fpr_limit`, normalised to [0, 1].
+
+    MVTec AD's region metric (Bergmann et al. 2021): every connected defect region
+    (8-connectivity) counts equally, however large. For each false-positive rate f
+    on a grid over [0, fpr_limit], the threshold is the (1 - f) quantile of normal
+    pixel scores; PRO(f) is the mean fraction of each region above it.
+    """
+    masks = np.asarray(masks).astype(bool)
+    if not masks.any():
+        return float("nan")
+    neg = np.asarray(maps, np.float32)[~masks]
+    fprs = np.linspace(0.0, fpr_limit, steps)
+    thr = np.quantile(neg, 1.0 - fprs)
+    del neg
+    regions = []
+    for m, s in zip(masks, maps):
+        if not m.any():
+            continue
+        n, lab = cv2.connectedComponents(m.astype(np.uint8), connectivity=8)
+        for r in range(1, n):
+            regions.append(np.sort(s[lab == r].astype(np.float32)))
+    pro = np.zeros(steps)
+    for reg in regions:  # fraction of region pixels with score >= threshold
+        pro += 1.0 - np.searchsorted(reg, thr, side="left") / len(reg)
+    pro /= len(regions)
+    trap = getattr(np, "trapezoid", None) or np.trapz
+    return float(trap(pro, fprs) / fpr_limit)
+
+
+def pixel_dprime(masks: np.ndarray, maps: np.ndarray) -> float:
+    """(mean defect-pixel score - mean normal-pixel score) / SD of normal-pixel scores.
+
+    Scale-free separation; a low-noise normal background raises it.
+    """
+    m = np.asarray(masks).astype(bool)
+    if not m.any():
+        return float("nan")
+    s = np.asarray(maps, np.float32)
+    neg = s[~m]
+    return float((s[m].mean() - neg.mean()) / (neg.std() + 1e-12))
+
+
+def topk_image_scores(patch_scores: np.ndarray, n_images: int, k: int) -> np.ndarray:
+    """Image score = mean of the k highest patch scores (k = 1 is the max)."""
+    g = np.asarray(patch_scores, np.float32).reshape(n_images, -1)
+    k = min(k, g.shape[1])
+    return np.partition(g, g.shape[1] - k, axis=1)[:, -k:].mean(1)
+
+
+def metrics(labels, image_scores, types, masks=None, maps=None, region_metrics: bool = False) -> dict:
     out = {"image_auroc": _auroc(labels, image_scores)}
     good = np.array([t == "good" for t in types])
     by_type = {}
@@ -179,6 +229,9 @@ def metrics(labels, image_scores, types, masks=None, maps=None) -> dict:
     out["image_auroc_by_type"] = json.dumps(by_type)
     if maps is not None:
         out["pixel_auroc"] = _auroc(masks.reshape(-1), maps.reshape(-1))
+        if region_metrics:
+            out["aupro"] = aupro(masks, maps)
+            out["pixel_dprime"] = pixel_dprime(masks, maps)
     return out
 
 
@@ -212,6 +265,33 @@ def word_radius(dist: np.ndarray, words: np.ndarray, k: int, q: float = 0.95, mi
     fill = np.nanmedian(r) if np.isfinite(r).any() else 1.0
     r = np.where(np.isfinite(r), r, fill)
     return np.maximum(r, 1e-6)
+
+
+def cached_vocabulary(cache_dir: Path | None, key: dict, build):
+    """Build a vocabulary once and pickle it (with its build timing) under cache_dir/vocab."""
+    import hashlib
+    import pickle
+
+    if cache_dir is None:
+        t: dict = {}
+        with budget(t, "vocab"):
+            v = build()
+        return v, t
+    h = hashlib.sha1(json.dumps(key, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    path = Path(cache_dir) / "vocab" / f"{h}.pkl"
+    if path.exists():
+        with open(path, "rb") as f:
+            v, t = pickle.load(f)
+        return v, {**t, "vocab_cache_hit": True}
+    t = {}
+    with budget(t, "vocab"):
+        v = build()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump((v, t), f)
+    tmp.replace(path)
+    return v, t
 
 
 # --------------------------------------------------------------------------- dataset with lazy images
@@ -286,6 +366,11 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     sub_sizes = sorted(sub_cfg.get("sizes", ks)) if sub_cfg else []
     sub_methods = [m for m in SUBSAMPLE_METHODS if m in sub_cfg.get("methods", SUBSAMPLE_METHODS)] if sub_cfg else []
     normalize = cfg.get("normalize", True)
+    topks = [int(k) for k in cfg.get("image_topk", [])]
+    region = bool(cfg.get("region_metrics", False))
+    save_maps_for = set(cfg.get("save_maps_for", []))
+    cache_vocab = bool(cfg.get("cache_vocab", False))
+    (out_dir / "maps").mkdir(exist_ok=True)
     sigma = cfg.get("smoothing_sigma", 4.0)
     mask_size = data_cfg.get("mask_size", 256)
     env = _env()
@@ -324,9 +409,16 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     "extract_seconds": (tr_info.get("extract_seconds") or 0) + (te_info.get("extract_seconds") or 0),
                     **env}
 
-            def record(rid, method, k, seed, image_scores, maps=None, extra=None, timing=None):
+            def record(rid, method, k, seed, image_scores, maps=None, extra=None, timing=None, patch_scores=None):
                 row = {"run_id": rid, **base, "method": method, "k": k, "vocab_seed": seed, **(timing or {}),
-                       **(extra or {}), **metrics(meta.labels, image_scores, meta.types, meta.masks, maps)}
+                       **(extra or {}),
+                       **metrics(meta.labels, image_scores, meta.types, meta.masks, maps, region_metrics=region)}
+                if patch_scores is not None:
+                    for tk in topks:
+                        row[f"image_auroc_top{tk}"] = _auroc(meta.labels, topk_image_scores(
+                            patch_scores, te.n_images, tk))
+                if maps is not None and cat in save_maps_for:
+                    np.save(out_dir / "maps" / (rid.replace("|", "__") + ".npy"), maps.astype(np.float16))
                 _append(jsonl, row)
                 np.save(out_dir / "scores" / (rid.replace("|", "__") + ".npy"), image_scores.astype(np.float32))
                 if progress:
@@ -343,7 +435,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     with budget(t, "score"):
                         ps = min_dist(_norm(te.desc, normalize), tr_desc)
                         maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma)
-                    record(rid, "patch_knn", 0, 0, img, maps, {"bank_size": len(tr_desc)}, t)
+                    record(rid, "patch_knn", 0, 0, img, maps, {"bank_size": len(tr_desc)}, t, ps)
 
             if "global_knn" in methods and tr.global_ is not None:
                 rid = _run_id(cfg["name"], cat, ex_name, "global_knn", 0, 0)
@@ -376,7 +468,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         with budget(t, "score"):
                             ps = min_dist(te_desc, tr_desc[np.sort(order[:k])])
                             maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma)
-                        record(rid, m, k, seed, img, maps, {"bank_size": int(min(k, len(tr_desc)))}, t)
+                        record(rid, m, k, seed, img, maps, {"bank_size": int(min(k, len(tr_desc)))}, t, ps)
 
             tr_n = LocalFeatures(desc=tr_desc, offsets=tr.offsets)
             te_n = LocalFeatures(desc=te_desc, offsets=te.offsets)
@@ -385,9 +477,10 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     ids = {m: _run_id(cfg["name"], cat, ex_name, m, k, seed) for m in cb_methods}
                     if all(i in done for i in ids.values()):
                         continue
-                    vt: dict = {}
-                    with budget(vt, "vocab"):
-                        vocab = build_vocabulary(tr_n.desc, k, seed=seed, **vocab_cfg)
+                    vkey = {"tag": tag, "extractor": ex_name, "params": cache_params, "normalize": normalize,
+                            "k": k, "seed": seed, "vocab": vocab_cfg}
+                    vocab, vt = cached_vocabulary(cache_dir if cache_vocab else None, vkey,
+                                                  lambda: build_vocabulary(tr_n.desc, k, seed=seed, **vocab_cfg))
                     extra = {"empty_words": vocab.info["empty_words"]}
                     if "codebook_dist" in ids or "codebook_norm" in ids:
                         t = dict(vt)
@@ -395,13 +488,14 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                             d_te, w_te = nearest_word(te_n.desc, vocab)
                         if ids.get("codebook_dist") and ids["codebook_dist"] not in done:
                             maps, img = patch_maps(d_te, te.n_images, side, mask_size, sigma)
-                            record(ids["codebook_dist"], "codebook_dist", k, seed, img, maps, extra, t)
+                            record(ids["codebook_dist"], "codebook_dist", k, seed, img, maps, extra, t, d_te)
                         if ids.get("codebook_norm") and ids["codebook_norm"] not in done:
                             t2 = dict(vt)
                             with budget(t2, "score"):
                                 radius = word_radius(*nearest_word(tr_n.desc, vocab), k)
-                                maps, img = patch_maps(d_te / radius[w_te], te.n_images, side, mask_size, sigma)
-                            record(ids["codebook_norm"], "codebook_norm", k, seed, img, maps, extra, t2)
+                                ns = d_te / radius[w_te]
+                                maps, img = patch_maps(ns, te.n_images, side, mask_size, sigma)
+                            record(ids["codebook_norm"], "codebook_norm", k, seed, img, maps, extra, t2, ns)
                     if ids.get("hist_knn") and ids["hist_knn"] not in done:
                         t = dict(vt)
                         with budget(t, "score"):
@@ -424,3 +518,54 @@ def summary(df: pd.DataFrame, metric: str = "image_auroc") -> pd.DataFrame:
     t = d.pivot_table(index=["extractor", "setting"], columns="category", values=metric, aggfunc="mean")
     t.insert(0, "mean", t.mean(1))
     return t.sort_values(["extractor", "mean"], ascending=[True, False])
+
+
+def followup_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Mean over categories and seeds of every image/pixel metric, plus hybrid rows.
+
+    Hybrid K: image score from the coreset of M = K patches, map from the K-word
+    codebook (same seed). Both parts are read off existing rows, not re-run.
+    """
+    cols = [c for c in ["image_auroc", "image_auroc_top3", "image_auroc_top10", "image_auroc_top30",
+                        "pixel_auroc", "aupro", "pixel_dprime"] if c in df]
+    d = df.copy()
+    d["k"] = d["k"].fillna(0).astype(int)
+    per_seed = d.groupby(["method", "k", "vocab_seed", "category"])[cols].mean().reset_index()
+    cs = per_seed[per_seed.method == "coreset_knn"].set_index(["k", "vocab_seed", "category"])
+    cb = per_seed[per_seed.method == "codebook_dist"].set_index(["k", "vocab_seed", "category"])
+    if len(cs) and len(cb):
+        img_cols = [c for c in cols if c.startswith("image")]
+        pix_cols = [c for c in cols if not c.startswith("image")]
+        hy = pd.concat([cs[img_cols], cb[pix_cols]], axis=1, join="inner").reset_index()
+        hy["method"] = "hybrid"
+        per_seed = pd.concat([per_seed, hy], ignore_index=True)
+    m = per_seed.groupby(["method", "k", "vocab_seed"])[cols].mean()
+    out = m.groupby(level=[0, 1]).mean()
+    sd = m.groupby(level=[0, 1]).std()
+    out.columns = [c.replace("image_auroc", "img").replace("pixel_auroc", "pix") for c in out.columns]
+    sd.columns = [c + "_sd" for c in out.columns]
+    return pd.concat([out, sd[["img_sd", "pix_sd"] if "pix_sd" in sd else ["img_sd"]]], axis=1)
+
+
+def normal_pixel_spread(results_dir, cfg_name: str, category: str, masks: np.ndarray,
+                        methods=(("codebook_dist", 1024), ("coreset_knn", 1024), ("patch_knn", 0)),
+                        extractor: str = "dinov2_s", seed: int = 0) -> pd.DataFrame:
+    """Normal-pixel score spread per method on saved maps, in units of that method's own scale.
+
+    `rel_iqr` = IQR / median of normal-pixel scores; `p99_over_median` shows how
+    far the noisiest normal pixels reach. Lower = quieter background.
+    """
+    rows = []
+    m = np.asarray(masks).astype(bool)
+    for meth, k in methods:
+        s_ = 0 if meth == "patch_knn" else seed
+        rid = _run_id(cfg_name, category, extractor, meth, k, s_).replace("|", "__")
+        path = Path(results_dir) / "maps" / f"{rid}.npy"
+        if not path.exists():
+            continue
+        mp = np.load(path).astype(np.float32)
+        neg, pos = mp[~m], mp[m]
+        q1, med, q3, p99 = np.quantile(neg, [0.25, 0.5, 0.75, 0.99])
+        rows.append({"method": meth, "k": k, "rel_iqr": (q3 - q1) / med, "p99_over_median": p99 / med,
+                     "defect_median_over_normal_median": float(np.median(pos) / med) if len(pos) else np.nan})
+    return pd.DataFrame(rows)

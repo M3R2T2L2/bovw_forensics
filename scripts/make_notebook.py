@@ -223,6 +223,63 @@ df.groupby(["extractor", "method", "k"])[cols].mean().round(1)"""),
 ]
 
 
+def _data_cells():
+    """The Data section of notebook 02 (licence flag, Drive archive, local extract), copied."""
+    import copy
+    i = next(j for j, c in enumerate(cells_02) if c["cell_type"] == "markdown" and c["source"].startswith("## 2 · Data"))
+    return [copy.deepcopy(cells_02[i]), copy.deepcopy(cells_02[i + 1])]
+
+
+cells_03 = [
+    md("""# P0 · Anomaly follow-up: words localize, coresets detect — why?
+
+At matched memory (M stored vectors = K words), the codebook wins pixel AUROC in 15/15 MVTec categories,
+while PatchCore's greedy coreset wins image AUROC. This notebook tests the explanation:
+
+| Check | Prediction if the explanation is right |
+|---|---|
+| **AUPRO** (every defect region counts equally) | codebook still beats the coreset on localization |
+| **Normal-pixel spread** | codebook background is quieter (lower relative IQR, higher pixel d′) |
+| **Top-k image score** (mean of the k highest patches) | closes most of the codebook's image-AUROC gap |
+| **Pill false alarms** | the codebook's worst normal images peak on speckles or print |
+| **Hybrid** (coreset image score + codebook map) | best of both |
+
+DINOv2-S only; 3 seeds. **Runtime (T4):** about 2 h, mostly k-means on CPU. Vocabularies are cached on
+Drive, so a rerun after a disconnect resumes quickly. Uses the MVTec archive already on Drive."""),
+    *setup_cells(),
+    *_data_cells(),
+
+    md("## 3 · Run"),
+    code("""from bovw.sweep import load_config
+from bovw import anomaly, plots
+
+cfg = load_config("configs/p0_anomaly_mvtec_v2.yaml")
+cfg["data"]["root"] = LOCAL_ROOT
+df = anomaly.run(cfg)"""),
+
+    md("""## 4 · Results
+
+`img` = max-patch image AUROC; `img_topK` = mean of the K highest patches; `pix` = pixel AUROC;
+`aupro` = region overlap up to 30% FPR; `pixel_dprime` = defect-vs-normal separation in normal-pixel SDs.
+Means over 15 categories and 3 seeds."""),
+    code("""t = anomaly.followup_table(df)
+t.to_csv(f"{cfg['results_dir']}/{cfg['name']}_followup.csv")
+t.round(3)"""),
+    code("""# Per-category AUPRO at M = K = 1024 (codebook vs coreset)
+d = df[df.k.fillna(0).astype(int).isin([0, 1024])]
+d.pivot_table(index="category", columns="method", values="aupro").round(3)"""),
+
+    md("## 5 · Pill: normal-pixel spread and false alarms"),
+    code("""from bovw import ad_data
+pill = ad_data.load_mvtec(LOCAL_ROOT, "pill", cfg["data"]["size"], cfg["data"]["mask_size"])
+spread = anomaly.normal_pixel_spread(cfg["results_dir"], cfg["name"], "pill", pill.test_masks)
+spread.to_csv(f"{cfg['results_dir']}/{cfg['name']}_pill_spread.csv", index=False)
+spread.round(3)"""),
+    code("""fig = plots.false_alarms(cfg["results_dir"], cfg["name"], "pill", pill.test_images, pill.test_labels)
+fig.savefig(f"{cfg['results_dir']}/{cfg['name']}_pill_false_alarms.png", dpi=110, bbox_inches="tight")"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -237,3 +294,4 @@ def write(cells, name):
 write(cells_00, "00_p0_minimal_stl10.ipynb")
 write(cells_01, "01_p0_stl10_full.ipynb")
 write(cells_02, "02_p0_anomaly_mvtec.ipynb")
+write(cells_03, "03_p0_anomaly_followup.ipynb")

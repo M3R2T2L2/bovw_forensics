@@ -1,0 +1,49 @@
+# P0 task 3, follow-up: why do visual words localize better than a coreset,
+# and why does the coreset detect images better? DINOv2-S only.
+#
+# Adds, per run:
+#   aupro               per-region overlap up to 30% FPR (every defect region counts equally)
+#   pixel_dprime        (mean defect score - mean normal score) / SD of normal-pixel scores
+#   image_auroc_top{k}  image score = mean of the k highest patch scores (max = top1)
+# Saves smoothed maps for the categories in save_maps_for (for the false-alarm figure).
+# The hybrid (coreset image score + codebook map) is read off matching rows.
+#
+# Runtime on a Colab T4: about 2 h, mostly k-means on CPU. Vocabularies are cached
+# on Drive, so later reruns skip k-means.
+
+name: p0_anomaly_mvtec_v2
+
+data:
+  name: mvtec
+  root: /content/mvtec
+  categories: all
+  size: 448
+  mask_size: 256
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 448, batch_size: 32}
+
+normalize: true
+smoothing_sigma: 4
+region_metrics: true
+image_topk: [1, 3, 10, 30]
+save_maps_for: [pill]
+cache_vocab: true
+
+methods:
+  patch_knn: {}
+  codebook:
+    k: [64, 256, 1024]
+    scores: [codebook_dist]
+  subsample:
+    sizes: [64, 256, 1024]
+    methods: [coreset_knn]
+
+vocab:
+  seeds: [0, 1, 2]
+  max_descriptors: 200000
+  spherical: true

@@ -27,3 +27,11 @@ def test_notebook_02_anomaly():
     assert "df = anomaly.run(cfg)" in src and "ad_data.ensure_archive(DRIVE_TAR)" in src
     assert "plots.anomaly_vs_k" in src
     assert "df = run(cfg)" not in src and "metric_vs_k" not in src  # no STL-10 cells spliced in
+
+
+def test_notebook_03_followup():
+    src = _code("03_p0_anomaly_followup.ipynb")
+    assert "p0_anomaly_mvtec_v2.yaml" in src and "df = anomaly.run(cfg)" in src
+    assert "ad_data.ensure_archive(DRIVE_TAR)" in src and "I_ACCEPT_MVTEC_LICENCE" in src
+    assert "plots.false_alarms" in src and "anomaly.followup_table" in src
+    assert "df = run(cfg)" not in src and "metric_vs_k" not in src
