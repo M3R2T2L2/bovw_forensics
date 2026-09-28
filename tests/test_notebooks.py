@@ -35,3 +35,10 @@ def test_notebook_03_followup():
     assert "ad_data.ensure_archive(DRIVE_TAR)" in src and "I_ACCEPT_MVTEC_LICENCE" in src
     assert "plots.false_alarms" in src and "anomaly.followup_table" in src
     assert "df = run(cfg)" not in src and "metric_vs_k" not in src
+
+
+def test_notebook_04_visa():
+    src = _code("04_p0_anomaly_visa.ipynb")
+    assert "p0_anomaly_visa.yaml" in src and "df = anomaly.run(cfg)" in src
+    assert "ad_data.VISA_URL" in src and "anomaly.prereg_checks" in src
+    assert "MVTEC" not in src and "df = run(cfg)" not in src

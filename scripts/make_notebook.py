@@ -280,6 +280,64 @@ fig.savefig(f"{cfg['results_dir']}/{cfg['name']}_pill_false_alarms.png", dpi=110
 ]
 
 
+cells_04 = [
+    md("""# P0 · Anomaly replication on VisA (preregistered)
+
+Tests whether the MVTec AD result holds on a second dataset, with every setting fixed in advance:
+see [`docs/preregistration_visa.md`](https://github.com/M3R2T2L2/bovw_forensics/blob/main/docs/preregistration_visa.md).
+**Primary image score: mean of the top-10 patch scores.**
+
+| ID | Prediction |
+|---|---|
+| P1 | codebook AUPRO > coreset AUPRO at M = 64, 256, 1024 |
+| P2 | codebook top-10 image AUROC >= coreset - 0.005 at M = 1024 |
+| P3 | codebook pixel AUROC >= coreset at M = 1024 |
+| P4 | codebook within 0.01 of the full bank at K = 1024 (image top-10, pixel, AUPRO) |
+
+**Data:** VisA (Zou et al., ECCV 2022), CC BY 4.0, official 1-class split; 12 categories, 10,821 images.
+**Runtime (T4):** about 2 h, plus a one-time ~1.8 GB download to Drive. Rerun after a disconnect to resume."""),
+    *setup_cells(),
+
+    md("## 2 · Data\nThe archive is kept on Drive so it downloads only once; each new runtime extracts it locally."),
+    code("""import os, subprocess
+from bovw import ad_data
+DRIVE_TAR = "/content/drive/MyDrive/bovw-forensics/data/VisA_20220922.tar"
+LOCAL = "/content/visa"
+
+if not os.path.isfile(DRIVE_TAR) or os.path.getsize(DRIVE_TAR) < 1e9:
+    ad_data.ensure_archive(DRIVE_TAR, url=ad_data.VISA_URL, sha256=None)
+if not os.path.isdir(LOCAL):
+    os.makedirs(LOCAL)
+    subprocess.run(["tar", "-xf", DRIVE_TAR, "-C", LOCAL], check=True)
+VISA_ROOT = ad_data.find_visa_root(LOCAL)
+print(VISA_ROOT, sorted(c for c in os.listdir(VISA_ROOT) if c in ad_data.VISA_CATEGORIES))
+print("archive SHA-256 (record in the paper):", ad_data.sha256sum(DRIVE_TAR))"""),
+
+    md("## 3 · Run"),
+    code("""from bovw.sweep import load_config
+from bovw import anomaly
+
+cfg = load_config("configs/p0_anomaly_visa.yaml")
+cfg["data"]["root"] = VISA_ROOT
+df = anomaly.run(cfg)"""),
+
+    md("## 4 · Preregistered checks"),
+    code("""import pandas as pd
+pd.set_option("display.max_colwidth", 120)
+checks = anomaly.prereg_checks(df)
+checks.to_csv(f"{cfg['results_dir']}/{cfg['name']}_prereg.csv", index=False)
+checks"""),
+
+    md("## 5 · Full table (secondary metrics are exploratory)"),
+    code("""t = anomaly.followup_table(df)
+t.to_csv(f"{cfg['results_dir']}/{cfg['name']}_followup.csv")
+t.round(3)"""),
+    code("""d = df[df.k.fillna(0).astype(int).isin([0, 1024])]
+pd.concat({m: d.pivot_table(index="category", columns="method", values=m)
+           for m in ["image_auroc_top10", "pixel_auroc", "aupro"]}, axis=1).round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -295,3 +353,4 @@ write(cells_00, "00_p0_minimal_stl10.ipynb")
 write(cells_01, "01_p0_stl10_full.ipynb")
 write(cells_02, "02_p0_anomaly_mvtec.ipynb")
 write(cells_03, "03_p0_anomaly_followup.ipynb")
+write(cells_04, "04_p0_anomaly_visa.ipynb")

@@ -324,6 +324,9 @@ class _LazyAD:
             if name == "mvtec":
                 self._split = ad_data.load_mvtec(self.cfg["root"], self.category, self.cfg.get("size", 448),
                                                  self.cfg.get("mask_size", 256))
+            elif name == "visa":
+                self._split = ad_data.load_visa(self.cfg["root"], self.category, self.cfg.get("size", 448),
+                                                self.cfg.get("mask_size", 256))
             elif name == "synthetic":
                 kw = {k: v for k, v in self.cfg.items() if k not in ("name", "categories", "root")}
                 self._split = ad_data.load_synthetic_ad(seed=zlib.crc32(self.category.encode()) % 1000, **kw)
@@ -348,7 +351,7 @@ class _LazyAD:
 def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     data_cfg = dict(cfg["data"])
     cats = data_cfg.get("categories", "all")
-    cats = ad_data.MVTEC_CATEGORIES if cats == "all" else list(cats)
+    cats = ad_data.categories(data_cfg.get("name", "mvtec")) if cats == "all" else list(cats)
     cache_dir, out_dir = Path(cfg["cache_dir"]), Path(cfg["results_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "scores").mkdir(exist_ok=True)
@@ -569,3 +572,26 @@ def normal_pixel_spread(results_dir, cfg_name: str, category: str, masks: np.nda
         rows.append({"method": meth, "k": k, "rel_iqr": (q3 - q1) / med, "p99_over_median": p99 / med,
                      "defect_median_over_normal_median": float(np.median(pos) / med) if len(pos) else np.nan})
     return pd.DataFrame(rows)
+
+
+def prereg_checks(df: pd.DataFrame, tol_image: float = 0.005, tol_full: float = 0.01) -> pd.DataFrame:
+    """The four preregistered VisA predictions (docs/preregistration_visa.md), pass/fail."""
+    t = followup_table(df)
+
+    def v(method, k, col):
+        return float(t.loc[(method, k), col])
+
+    rows = []
+    aup = {k: (v("codebook_dist", k, "aupro"), v("coreset_knn", k, "aupro")) for k in (64, 256, 1024)}
+    rows.append(("P1", "codebook AUPRO > coreset at M = 64, 256, 1024",
+                 "; ".join(f"M={k}: {a:.3f} vs {b:.3f}" for k, (a, b) in aup.items()),
+                 all(a > b for a, b in aup.values())))
+    a, b = v("codebook_dist", 1024, "img_top10"), v("coreset_knn", 1024, "img_top10")
+    rows.append(("P2", f"codebook top-10 image AUROC >= coreset - {tol_image} (M = 1024)",
+                 f"{a:.3f} vs {b:.3f}", a >= b - tol_image))
+    a, b = v("codebook_dist", 1024, "pix"), v("coreset_knn", 1024, "pix")
+    rows.append(("P3", "codebook pixel AUROC >= coreset (M = 1024)", f"{a:.3f} vs {b:.3f}", a >= b))
+    gaps = {c: v("patch_knn", 0, c) - v("codebook_dist", 1024, c) for c in ("img_top10", "pix", "aupro")}
+    rows.append(("P4", f"codebook within {tol_full} of full bank (K = 1024)",
+                 "; ".join(f"{c} gap {g:+.3f}" for c, g in gaps.items()), all(g <= tol_full for g in gaps.values())))
+    return pd.DataFrame(rows, columns=["id", "prediction", "observed", "pass"])

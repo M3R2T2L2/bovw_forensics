@@ -184,3 +184,59 @@ def test_ensure_archive_keeps_real_sized_mismatch(tmp_path):
         ad_data.ensure_archive(str(f), "file:///nonexistent", "0" * 64, stub_bytes=1000)
     assert f.exists()  # the user's file is left alone
     assert ad_data.ensure_archive(str(f), "file:///nonexistent", None) == str(f)
+
+
+def _mock_visa(tmp_path):
+    import cv2
+
+    root = tmp_path / "VisA_20220922"
+    (root / "candle/Data/Images/Normal").mkdir(parents=True)
+    (root / "candle/Data/Images/Anomaly").mkdir(parents=True)
+    (root / "candle/Data/Masks/Anomaly").mkdir(parents=True)
+    rows = ["object,split,label,image,mask"]
+    for i in range(3):
+        cv2.imwrite(str(root / f"candle/Data/Images/Normal/{i:04d}.JPG"), np.full((120, 100, 3), 90, np.uint8))
+        rows.append(f"candle,{'train' if i < 2 else 'test'},normal,candle/Data/Images/Normal/{i:04d}.JPG,")
+    cv2.imwrite(str(root / "candle/Data/Images/Anomaly/000.JPG"), np.full((120, 100, 3), 200, np.uint8))
+    m = np.zeros((120, 100), np.uint8)
+    m[10:40, 10:40] = 1  # VisA masks may use small non-zero values
+    cv2.imwrite(str(root / "candle/Data/Masks/Anomaly/000.png"), m)
+    rows.append("candle,test,anomaly,candle/Data/Images/Anomaly/000.JPG,candle/Data/Masks/Anomaly/000.png")
+    rows.append("cashew,train,normal,cashew/x.JPG,")
+    csv_path = tmp_path / "split.csv"
+    csv_path.write_text("\n".join(rows) + "\n")
+    return tmp_path, root, csv_path
+
+
+def test_visa_loader(tmp_path):
+    top, root, csv_path = _mock_visa(tmp_path)
+    assert ad_data.find_visa_root(str(top)) == str(root)
+    s = ad_data.load_visa(str(root), "candle", size=64, mask_size=32, split_csv=csv_path)
+    assert len(s.train_images) == 2 and s.train_images[0].shape == (64, 64, 3)
+    assert list(s.test_labels) == [0, 1] and s.test_types == ["good", "anomaly"]
+    assert s.test_masks[1].max() == 1 and 0.05 < s.test_masks[1].mean() < 0.15
+    assert s.test_masks[0].sum() == 0
+
+
+def test_visa_official_split_counts():
+    import pandas as pd
+
+    d = pd.read_csv(ad_data.VISA_SPLIT_CSV)
+    assert sorted(d.object.unique()) == sorted(ad_data.VISA_CATEGORIES)
+    assert len(d) == 10821 and (d.label == "anomaly").sum() == 1200
+    assert (d[d.split == "train"].label == "normal").all()
+
+
+def test_prereg_checks():
+    import pandas as pd
+
+    rows = []
+    for seed in (0, 1, 2):
+        for k in (64, 256, 1024):
+            for m, aup, top10, pix in (("codebook_dist", 0.93, 0.985, 0.978), ("coreset_knn", 0.90, 0.986, 0.970)):
+                rows.append({"method": m, "k": k, "vocab_seed": seed, "category": "a", "image_auroc": 0.97,
+                             "image_auroc_top10": top10, "pixel_auroc": pix, "aupro": aup})
+    rows.append({"method": "patch_knn", "k": 0, "vocab_seed": 0, "category": "a", "image_auroc": 0.98,
+                 "image_auroc_top10": 0.99, "pixel_auroc": 0.98, "aupro": 0.94})
+    r = anomaly.prereg_checks(pd.DataFrame(rows)).set_index("id")["pass"]
+    assert r.to_dict() == {"P1": True, "P2": True, "P3": True, "P4": True}

@@ -25,6 +25,19 @@ MVTEC_CATEGORIES = ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", 
                     "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]
 
 
+VISA_CATEGORIES = ["candle", "capsules", "cashew", "chewinggum", "fryum", "macaroni1", "macaroni2",
+                   "pcb1", "pcb2", "pcb3", "pcb4", "pipe_fryum"]
+
+# VisA (Zou et al., ECCV 2022), CC BY 4.0. Official archive and 1-class split
+# (split_csv/1cls.csv from github.com/amazon-science/spot-diff, Apache-2.0, vendored).
+VISA_URL = "https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/VisA_20220922.tar"
+VISA_SPLIT_CSV = Path(__file__).resolve().parent / "resources" / "visa_1cls.csv"
+
+
+def categories(dataset: str) -> list:
+    return {"mvtec": MVTEC_CATEGORIES, "visa": VISA_CATEGORIES}[dataset]
+
+
 @dataclass
 class ADSplit:
     train_images: list
@@ -34,8 +47,19 @@ class ADSplit:
     test_types: list
 
 
-def _read_rgb(path: Path, size: int) -> np.ndarray:
-    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+def _read_rgb(path: Path, size: int, fast: bool = False) -> np.ndarray:
+    """Read, convert to RGB and resize to size x size.
+
+    fast=True decodes JPEGs at half resolution (much quicker for VisA's ~1.5k px
+    images) and falls back to a full decode if that would be smaller than `size`.
+    """
+    img = None
+    if fast:
+        img = cv2.imread(str(path), cv2.IMREAD_REDUCED_COLOR_2)
+        if img is not None and min(img.shape[:2]) < size:
+            img = None
+    if img is None:
+        img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(path)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -62,6 +86,57 @@ def load_mvtec(root: str, category: str, size: int = 448, mask_size: int = 256) 
                     raise FileNotFoundError(f"mask for {p}")
                 masks.append((cv2.resize(m, (mask_size, mask_size), interpolation=cv2.INTER_NEAREST) > 127)
                              .astype(np.uint8))
+    return ADSplit(train, imgs, np.array(labels), np.stack(masks), types)
+
+
+def find_visa_root(path: str) -> str:
+    """The directory that holds candle/Data/..., wherever the archive put it."""
+    p = Path(path)
+    for cand in [p, *sorted(p.iterdir())] if p.is_dir() else []:
+        if (cand / "candle" / "Data" / "Images").is_dir():
+            return str(cand)
+    raise FileNotFoundError(f"No VisA layout (candle/Data/Images) under {path}")
+
+
+def load_visa(root: str, category: str, size: int = 448, mask_size: int = 256,
+              split_csv: str | Path = VISA_SPLIT_CSV) -> ADSplit:
+    """VisA with the official 1-class split: train = normal only; test = normal + anomalous.
+
+    Masks are binarised (any non-zero pixel = anomaly), as in the official prepare_data.py.
+    All anomalies share the type "anomaly" (the 1-class split has no defect-type labels).
+    """
+    import csv
+
+    base = Path(root)
+    if not (base / category).is_dir():
+        raise FileNotFoundError(f"{base / category} not found")
+    train, imgs, labels, masks, types = [], [], [], [], []
+    with open(split_csv, newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["object"] == category]
+    if not rows:
+        raise KeyError(f"'{category}' not in {split_csv}")
+    from concurrent.futures import ThreadPoolExecutor
+
+    cv2.setNumThreads(1)
+    with ThreadPoolExecutor(max_workers=4) as ex:  # cv2 decoding releases the GIL
+        decoded = list(ex.map(lambda r: _read_rgb(base / r["image"], size, fast=True), rows))
+    for r, img in zip(rows, decoded):
+        if r["split"] == "train":
+            train.append(img)
+            continue
+        imgs.append(img)
+        if r["label"] == "normal":
+            labels.append(0)
+            types.append("good")
+            masks.append(np.zeros((mask_size, mask_size), np.uint8))
+        else:
+            labels.append(1)
+            types.append("anomaly")
+            m = cv2.imread(str(base / r["mask"]), cv2.IMREAD_GRAYSCALE)
+            if m is None:
+                raise FileNotFoundError(f"mask {r['mask']}")
+            masks.append((cv2.resize(m, (mask_size, mask_size), interpolation=cv2.INTER_NEAREST) > 0)
+                         .astype(np.uint8))
     return ADSplit(train, imgs, np.array(labels), np.stack(masks), types)
 
 

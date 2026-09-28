@@ -25,3 +25,6 @@ dev = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 include = ["bovw*"]
+
+[tool.setuptools.package-data]
+bovw = ["resources/*.csv"]
