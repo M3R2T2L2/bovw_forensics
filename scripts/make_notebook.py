@@ -338,6 +338,68 @@ pd.concat({m: d.pivot_table(index="category", columns="method", values=m)
 ]
 
 
+cells_05 = [
+    md("""# P0 → P3 · Unsupervised defect-type discovery (MVTec AD)
+
+After the codebook flags suspicious patches, can we sort anomalous images by **kind** of defect with no labels?
+Each image is described by its 10 most suspicious patches; images are clustered and compared with MVTec's
+defect-type folders (NMI, ARI, accuracy; chance = shuffled labels).
+
+| Descriptor | What it encodes |
+|---|---|
+| `topk_resid` | what the normal vocabulary *cannot* explain: patch minus its nearest word |
+| `topk_feat` | what the suspicious patches look like |
+| `cls` | whole-image embedding (baseline) |
+| `mask_feat` | features inside the true defect mask (upper bound, uses labels) |
+
+**Settings:** `oracle` clusters the truly anomalous images; `detected` clusters the images the detector flags,
+so false alarms join as a "good" class. Reuses cached features and vocabularies from notebook 03:
+about 10–15 min on a T4. Exploratory, not preregistered."""),
+    *setup_cells(),
+    *_data_cells(),
+
+    md("## 3 · Run"),
+    code("""from bovw.sweep import load_config
+from bovw import discovery
+
+cfg = load_config("configs/p0_defect_discovery_mvtec.yaml")
+cfg["data"]["root"] = LOCAL_ROOT
+df = discovery.run(cfg)"""),
+
+    md("## 4 · Results\n`nmi_above_chance` is the headline: NMI minus the shuffled-label NMI of the same clustering."),
+    code("""s = discovery.summary(df)
+s.to_csv(f"{cfg['results_dir']}/{cfg['name']}_summary.csv")
+s.round(3)"""),
+    code("""# Per category, oracle setting, k-means
+o = df[(df.setting == "oracle") & (df.algorithm == "kmeans")]
+t = o.pivot_table(index=["category"], columns="descriptor", values="nmi_above_chance").round(3)
+t.insert(0, "n_types", o.groupby("category").n_types.first())
+t.to_csv(f"{cfg['results_dir']}/{cfg['name']}_per_category.csv")
+t"""),
+
+    md("## 5 · Look at the clusters\nRows = discovered clusters; each tile is titled with its true defect type."),
+    code("""import matplotlib.pyplot as plt
+from bovw import ad_data
+
+CATEGORY = "bottle"   # try metal_nut, hazelnut, pill, cable
+idx, pred, types = discovery.cluster_category(cfg, CATEGORY, "topk_resid")
+split = ad_data.load_mvtec(LOCAL_ROOT, CATEGORY, 224, 64)
+n_cl, per = pred.max() + 1, 6
+fig, axes = plt.subplots(n_cl, per, figsize=(1.9 * per, 2.1 * n_cl), squeeze=False)
+for c in range(n_cl):
+    members = idx[pred == c][:per]
+    for j in range(per):
+        ax = axes[c][j]; ax.set_axis_off()
+        if j < len(members):
+            ax.imshow(split.test_images[members[j]])
+            ax.set_title(types[pred == c][j], fontsize=7)
+    axes[c][0].text(-0.1, 0.5, f"cluster {c}\\n(n={int((pred == c).sum())})", transform=axes[c][0].transAxes,
+                    ha="right", va="center", fontsize=8)
+fig.tight_layout()
+fig.savefig(f"{cfg['results_dir']}/{cfg['name']}_{CATEGORY}_clusters.png", dpi=110, bbox_inches="tight")"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -354,3 +416,4 @@ write(cells_01, "01_p0_stl10_full.ipynb")
 write(cells_02, "02_p0_anomaly_mvtec.ipynb")
 write(cells_03, "03_p0_anomaly_followup.ipynb")
 write(cells_04, "04_p0_anomaly_visa.ipynb")
+write(cells_05, "05_p0_defect_discovery.ipynb")

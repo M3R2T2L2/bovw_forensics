@@ -32,6 +32,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 - `notebooks/02_p0_anomaly_mvtec.ipynb`: anomaly detection on MVTec AD (CC BY-NC-SA 4.0: accept the licence first)
 - `notebooks/03_p0_anomaly_followup.ipynb`: MVTec follow-up: AUPRO, top-k image scores, matched-memory coreset, pill false alarms
 - `notebooks/04_p0_anomaly_visa.ipynb`: preregistered replication on VisA (CC BY 4.0); see `docs/preregistration_visa.md`
+- `notebooks/05_p0_defect_discovery.ipynb`: unsupervised defect-type discovery on MVTec AD (clusters anomalous images by kind of defect)
 
 Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`
 

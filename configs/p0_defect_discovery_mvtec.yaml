@@ -1,0 +1,36 @@
+# P0 / P3 bridge: unsupervised defect-type discovery on MVTec AD.
+# Can we group anomalous images by kind of defect, with no labels, using what the
+# normal vocabulary cannot explain? Ground truth = MVTec defect-type folders.
+#
+# Reuses cached DINOv2-S features and the K=1024 vocabularies from
+# p0_anomaly_mvtec_v2 (same settings below), so it needs no feature extraction or
+# k-means: about 10-15 min on a Colab T4, mostly loading features from Drive.
+# Exploratory: nothing here is preregistered.
+
+name: p0_defect_discovery_mvtec
+
+data:
+  name: mvtec
+  root: /content/mvtec
+  categories: all
+  size: 448
+  mask_size: 256
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractor:
+  name: dinov2_s
+  params: {image_size: 448, batch_size: 32}
+
+normalize: true
+k: [1024]
+topk: 10                     # patches per image that describe its defect
+drop_types: [combined]       # MVTec "combined" images mix several defect types
+algorithms: [kmeans, ward]
+settings: [oracle, detected]
+
+vocab:                       # must match p0_anomaly_mvtec_v2 to reuse its cached vocabularies
+  seeds: [0, 1, 2]
+  max_descriptors: 200000
+  spherical: true

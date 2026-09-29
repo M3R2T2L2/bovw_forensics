@@ -42,3 +42,10 @@ def test_notebook_04_visa():
     assert "p0_anomaly_visa.yaml" in src and "df = anomaly.run(cfg)" in src
     assert "ad_data.VISA_URL" in src and "anomaly.prereg_checks" in src
     assert "MVTEC" not in src and "df = run(cfg)" not in src
+
+
+def test_notebook_05_discovery():
+    src = _code("05_p0_defect_discovery.ipynb")
+    assert "p0_defect_discovery_mvtec.yaml" in src and "df = discovery.run(cfg)" in src
+    assert "ad_data.ensure_archive(DRIVE_TAR)" in src and "discovery.cluster_category" in src
+    assert "anomaly.run(cfg)" not in src and "df = run(cfg)" not in src

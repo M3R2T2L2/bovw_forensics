@@ -240,3 +240,38 @@ def test_prereg_checks():
                  "image_auroc_top10": 0.99, "pixel_auroc": 0.98, "aupro": 0.94})
     r = anomaly.prereg_checks(pd.DataFrame(rows)).set_index("id")["pass"]
     assert r.to_dict() == {"P1": True, "P2": True, "P3": True, "P4": True}
+
+
+def test_defect_discovery_synthetic(tmp_path):
+    from bovw import discovery
+
+    cfg = {"name": "d", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                 "n_train": 20, "n_good": 10, "n_bad": 20},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractor": {"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}},
+           "k": [16], "topk": 5, "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}}
+    df = discovery.run(cfg, progress=False)
+    assert set(df.setting) == {"oracle", "detected"}
+    assert set(df.descriptor) == {"topk_resid", "topk_feat", "mask_feat"}  # no CLS for SIFT
+    o = df[(df.setting == "oracle")]
+    assert (o.n_types == 2).all() and (o.n_images == 20).all()
+    # noise squares vs rotated stripes: the defect region separates them better than chance
+    assert o[o.descriptor == "mask_feat"].nmi_above_chance.max() > 0.1
+    assert (df.nmi_chance < 0.2).all()
+    assert len(discovery.run(cfg, progress=False)) == len(df)  # resume
+    assert len(discovery.summary(df)) == len(df.groupby(["setting", "algorithm", "descriptor"]))
+
+
+def test_image_descriptors_shapes():
+    from bovw import discovery
+
+    rng = np.random.default_rng(0)
+    n, side, d = 3, 4, 8
+    desc = rng.normal(size=(n * side * side, d)).astype(np.float32)
+    dist = rng.random(n * side * side).astype(np.float32)
+    masks = np.zeros((n, 16, 16), np.uint8)
+    masks[0, :8, :8] = 1
+    out = discovery.image_descriptors(desc, n, dist, desc * 0.5, 2, masks, side, rng.normal(size=(n, 5)))
+    assert {k: v.shape for k, v in out.items()} == {"topk_feat": (3, 8), "topk_resid": (3, 8), "cls": (3, 5),
+                                                     "mask_feat": (3, 8)}
+    assert np.allclose(np.linalg.norm(out["topk_feat"], axis=1), 1, atol=1e-5)
