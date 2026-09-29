@@ -275,3 +275,53 @@ def test_image_descriptors_shapes():
     assert {k: v.shape for k, v in out.items()} == {"topk_feat": (3, 8), "topk_resid": (3, 8), "cls": (3, 5),
                                                      "mask_feat": (3, 8)}
     assert np.allclose(np.linalg.norm(out["topk_feat"], axis=1), 1, atol=1e-5)
+
+
+def test_binned_pixel_metrics_match_exact():
+    rng = np.random.default_rng(0)
+    masks = np.zeros((40, 64, 64), np.uint8)
+    for i in range(20):
+        y, x = rng.integers(0, 48, 2)
+        masks[i, y:y + rng.integers(3, 16), x:x + rng.integers(3, 16)] = 1
+    maps = (rng.normal(size=masks.shape) + 1.5 * masks).astype(np.float32)
+    b = anomaly.binned_pixel_metrics(masks, maps.astype(np.float16), True)
+    assert b["pixel_auroc"] == pytest.approx(anomaly._auroc(masks.reshape(-1), maps.reshape(-1)), abs=2e-3)
+    assert b["aupro"] == pytest.approx(anomaly.aupro(masks, maps), abs=5e-3)
+    assert b["pixel_dprime"] == pytest.approx(anomaly.pixel_dprime(masks, maps), abs=0.02)
+
+
+def test_low_memory_run_matches(tmp_path):
+    base = {"data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                     "n_train": 20, "n_good": 10, "n_bad": 10},
+            "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+            "region_metrics": True, "image_topk": [3],
+            "methods": {"patch_knn": {}, "codebook": {"k": [16], "scores": ["codebook_dist"]},
+                        "subsample": {"sizes": [16], "methods": ["coreset_knn"]}},
+            "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}}
+    a = anomaly.run({**base, "name": "a", "cache_dir": str(tmp_path / "c1"), "results_dir": str(tmp_path / "r1")},
+                    progress=False).sort_values("method")
+    b = anomaly.run({**base, "name": "b", "low_memory": True, "cache_dir": str(tmp_path / "c2"),
+                     "results_dir": str(tmp_path / "r2")}, progress=False).sort_values("method")
+    for c in ["image_auroc", "image_auroc_top3", "pixel_auroc", "aupro"]:
+        assert np.allclose(a[c].values, b[c].values, atol=5e-3), c
+
+
+def test_mvtec_style_loader_3cad_layout(tmp_path):
+    import cv2
+
+    cat = tmp_path / "3CAD" / "Copper_Stator"
+    for sub in ["train/good", "test/good", "test/scratch", "ground_truth/scratch"]:
+        (cat / sub).mkdir(parents=True)
+    for p in ["train/good/a.jpg", "train/good/b.jpg", "test/good/c.jpg", "test/scratch/d.jpg"]:
+        cv2.imwrite(str(cat / p), np.full((90, 70, 3), 100, np.uint8))
+    m = np.zeros((90, 70), np.uint8)
+    m[:30, :30] = 1
+    cv2.imwrite(str(cat / "ground_truth/scratch/d.png"), m)   # no "_mask" suffix
+    root = ad_data.find_root(str(tmp_path), "Copper_Stator")
+    assert root == str(tmp_path / "3CAD")
+    s = ad_data.load_mvtec_style(root, "Copper_Stator", size=64, mask_size=32)
+    assert len(s.train_images) == 2 and s.test_types == ["good", "scratch"]
+    assert list(s.test_labels) == [0, 1] and s.test_masks[1].sum() > 0
+    (cat / "ground_truth/scratch/d.png").unlink()
+    with pytest.raises(FileNotFoundError, match="no mask"):
+        ad_data.load_mvtec_style(root, "Copper_Stator", size=64, mask_size=32)

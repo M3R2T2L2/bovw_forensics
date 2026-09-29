@@ -49,3 +49,10 @@ def test_notebook_05_discovery():
     assert "p0_defect_discovery_mvtec.yaml" in src and "df = discovery.run(cfg)" in src
     assert "ad_data.ensure_archive(DRIVE_TAR)" in src and "discovery.cluster_category" in src
     assert "anomaly.run(cfg)" not in src and "df = run(cfg)" not in src
+
+
+def test_notebook_06_3cad():
+    src = _code("06_p0_anomaly_3cad.ipynb")
+    assert "p0_anomaly_3cad.yaml" in src and "df = anomaly.run(cfg)" in src
+    assert "THREECAD_GDRIVE_ID" in src and "anomaly.prereg_checks" in src and "count_mvtec_style" in src
+    assert "VISA_URL" not in src and "df = run(cfg)" not in src

@@ -154,10 +154,11 @@ def grid_side(feats: LocalFeatures) -> int:
     return side
 
 
-def patch_maps(patch_scores: np.ndarray, n_images: int, side: int, mask_size: int, sigma: float = 4.0):
+def patch_maps(patch_scores: np.ndarray, n_images: int, side: int, mask_size: int, sigma: float = 4.0,
+               dtype=np.float32):
     """(n_images*side*side,) -> smoothed (n_images, mask_size, mask_size) maps and max-patch image scores."""
     grid = patch_scores.reshape(n_images, side, side).astype(np.float32)
-    maps = np.empty((n_images, mask_size, mask_size), np.float32)
+    maps = np.empty((n_images, mask_size, mask_size), dtype)
     for i in range(n_images):
         m = cv2.resize(grid[i], (mask_size, mask_size), interpolation=cv2.INTER_LINEAR)
         maps[i] = cv2.GaussianBlur(m, (0, 0), sigma) if sigma else m
@@ -219,6 +220,72 @@ def topk_image_scores(patch_scores: np.ndarray, n_images: int, k: int) -> np.nda
     return np.partition(g, g.shape[1] - k, axis=1)[:, -k:].mean(1)
 
 
+LARGE_PIXELS = 100_000_000  # above this many pixels, pixel metrics use a 65,536-bin histogram (3CAD only)
+_BINS = 65536
+
+
+def _score_range(maps: np.ndarray, chunk: int = 256) -> tuple[float, float]:
+    lo, hi = np.inf, -np.inf
+    for i in range(0, len(maps), chunk):
+        b = maps[i:i + chunk]
+        lo, hi = min(lo, float(b.min())), max(hi, float(b.max()))
+    return lo, hi if hi > lo else lo + 1e-6
+
+
+def _hist(maps, masks, lo, hi, want_pos: bool, chunk: int = 256) -> np.ndarray:
+    """Histogram of scores of pixels where mask == want_pos, streamed over images."""
+    h = np.zeros(_BINS, np.int64)
+    scale = (_BINS - 1) / (hi - lo)
+    for i in range(0, len(maps), chunk):
+        m = masks[i:i + chunk].astype(bool)
+        sel = m if want_pos else ~m
+        v = maps[i:i + chunk][sel].astype(np.float32)
+        h += np.bincount(np.clip(((v - lo) * scale).astype(np.int64), 0, _BINS - 1), minlength=_BINS)
+    return h
+
+
+def binned_pixel_metrics(masks: np.ndarray, maps: np.ndarray, region_metrics: bool,
+                         fpr_limit: float = 0.3, steps: int = 301) -> dict:
+    """Pixel AUROC, AUPRO and d' from streamed 65,536-bin histograms (memory-bounded).
+
+    Used only when there are more than LARGE_PIXELS pixels; the binning error in
+    AUROC is below 1e-4 (tests compare with the exact values).
+    """
+    lo, hi = _score_range(maps)
+    hp, hn = _hist(maps, masks, lo, hi, True), _hist(maps, masks, lo, hi, False)
+    npos, nneg = hp.sum(), hn.sum()
+    out = {}
+    if npos == 0 or nneg == 0:
+        return {"pixel_auroc": float("nan")}
+    # AUROC = P(pos > neg) + 0.5 P(tie), ties = same bin
+    neg_below = np.concatenate([[0], np.cumsum(hn)[:-1]])
+    out["pixel_auroc"] = float((hp * (neg_below + 0.5 * hn)).sum() / (npos * nneg))
+    if region_metrics:
+        centers = lo + (np.arange(_BINS) + 0.5) * (hi - lo) / (_BINS - 1)
+        neg_above = nneg - np.cumsum(hn) + hn          # negatives with score in bin >= b
+        fpr_at_bin = neg_above / nneg                  # decreasing in b
+        fprs = np.linspace(0.0, fpr_limit, steps)
+        # threshold for each target FPR: first bin whose FPR <= f
+        idx = np.searchsorted(-fpr_at_bin, -fprs, side="left").clip(0, _BINS - 1)
+        thr = lo + idx * (hi - lo) / (_BINS - 1)
+        pro, n_reg = np.zeros(steps), 0
+        for m, sc in zip(masks, maps):
+            if not m.any():
+                continue
+            n, lab = cv2.connectedComponents(m.astype(np.uint8), connectivity=8)
+            for r in range(1, n):
+                reg = np.sort(sc[lab == r].astype(np.float32))
+                pro += 1.0 - np.searchsorted(reg, thr, side="left") / len(reg)
+                n_reg += 1
+        trap = getattr(np, "trapezoid", None) or np.trapz
+        out["aupro"] = float(trap(pro / max(n_reg, 1), fprs) / fpr_limit)
+        mu_p = (hp * centers).sum() / npos
+        mu_n = (hn * centers).sum() / nneg
+        sd_n = np.sqrt((hn * (centers - mu_n) ** 2).sum() / nneg)
+        out["pixel_dprime"] = float((mu_p - mu_n) / (sd_n + 1e-12))
+    return out
+
+
 def metrics(labels, image_scores, types, masks=None, maps=None, region_metrics: bool = False) -> dict:
     out = {"image_auroc": _auroc(labels, image_scores)}
     good = np.array([t == "good" for t in types])
@@ -227,12 +294,25 @@ def metrics(labels, image_scores, types, masks=None, maps=None, region_metrics: 
         sel = good | np.array([x == t for x in types])
         by_type[t] = _auroc(np.asarray(labels)[sel], np.asarray(image_scores)[sel])
     out["image_auroc_by_type"] = json.dumps(by_type)
-    if maps is not None:
+    if maps is not None and maps.size > LARGE_PIXELS:
+        out.update(binned_pixel_metrics(masks, maps, region_metrics))
+        out["pixel_metrics_binned"] = True
+    elif maps is not None:
         out["pixel_auroc"] = _auroc(masks.reshape(-1), maps.reshape(-1))
         if region_metrics:
             out["aupro"] = aupro(masks, maps)
             out["pixel_dprime"] = pixel_dprime(masks, maps)
     return out
+
+
+def _norm_inplace(x: np.ndarray, normalize: bool, chunk: int = 262144) -> np.ndarray:
+    """L2-normalise rows in place, chunk by chunk (no full float32 copy); keeps x's dtype."""
+    if not normalize:
+        return x
+    for i in range(0, len(x), chunk):
+        b = np.asarray(x[i:i + chunk], np.float32)
+        x[i:i + chunk] = l2n(b)
+    return x
 
 
 def _norm(x: np.ndarray, normalize: bool) -> np.ndarray:
@@ -324,6 +404,9 @@ class _LazyAD:
             if name == "mvtec":
                 self._split = ad_data.load_mvtec(self.cfg["root"], self.category, self.cfg.get("size", 448),
                                                  self.cfg.get("mask_size", 256))
+            elif name == "3cad":
+                self._split = ad_data.load_mvtec_style(self.cfg["root"], self.category, self.cfg.get("size", 448),
+                                                       self.cfg.get("mask_size", 256))
             elif name == "visa":
                 self._split = ad_data.load_visa(self.cfg["root"], self.category, self.cfg.get("size", 448),
                                                 self.cfg.get("mask_size", 256))
@@ -373,6 +456,8 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     region = bool(cfg.get("region_metrics", False))
     save_maps_for = set(cfg.get("save_maps_for", []))
     cache_vocab = bool(cfg.get("cache_vocab", False))
+    low_mem = bool(cfg.get("low_memory", False))
+    map_dtype = np.float16 if low_mem else np.float32
     (out_dir / "maps").mkdir(exist_ok=True)
     sigma = cfg.get("smoothing_sigma", 4.0)
     mask_size = data_cfg.get("mask_size", 256)
@@ -402,10 +487,15 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
 
             tr, tr_info = cache.get_or_compute(cache_dir, f"{tag}_train", ex_name, cache_params,
                                               lambda: extract(ds.split.train_images))
+            if low_mem and ds._split is not None:
+                ds._split.train_images = []   # free decoded training images before the test pass
             te, te_info = cache.get_or_compute(cache_dir, f"{tag}_test", ex_name, cache_params,
                                               lambda: extract(ds.split.test_images))
             del extractor
             meta = ds.get_meta()
+            if low_mem:
+                ds._split = None              # labels and masks live on in meta
+                gc.collect()
             side = grid_side(te)
             base = {"config": cfg["name"], "category": cat, "extractor": ex_name, "n_train": tr.n_images,
                     "n_test": te.n_images, "n_anomalous": int(meta.labels.sum()), "patches_per_image": side * side,
@@ -429,15 +519,20 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     print(f"[{cat:>10}|{ex_name:>10}] {method:<15} K={k:<5} s={seed}  "
                           f"image={row['image_auroc']:.3f}  pixel={pa:.3f}")
 
-            tr_desc = _norm(tr.desc, normalize)
+            if low_mem:  # normalise the loaded float16 arrays in place: no float32 copies of the bank
+                tr_desc = _norm_inplace(np.asarray(tr.desc), normalize)
+                te_desc = _norm_inplace(np.asarray(te.desc), normalize)
+            else:
+                tr_desc = _norm(tr.desc, normalize)
+                te_desc = _norm(te.desc, normalize)
 
             if "patch_knn" in methods:
                 rid = _run_id(cfg["name"], cat, ex_name, "patch_knn", 0, 0)
                 if rid not in done:
                     t: dict = {}
                     with budget(t, "score"):
-                        ps = min_dist(_norm(te.desc, normalize), tr_desc)
-                        maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma)
+                        ps = min_dist(te_desc, tr_desc)
+                        maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma, map_dtype)
                     record(rid, "patch_knn", 0, 0, img, maps, {"bank_size": len(tr_desc)}, t, ps)
 
             if "global_knn" in methods and tr.global_ is not None:
@@ -448,7 +543,6 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         img = min_dist(_norm(te.global_, normalize), _norm(tr.global_, normalize))
                     record(rid, "global_knn", 0, 0, img, None, None, t)
 
-            te_desc = _norm(te.desc, normalize)
             for seed in seeds:
                 ids = {(m, k): _run_id(cfg["name"], cat, ex_name, m, k, seed) for m in sub_methods for k in sub_sizes}
                 if all(i in done for i in ids.values()):
@@ -470,7 +564,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         t = dict(sel_t)
                         with budget(t, "score"):
                             ps = min_dist(te_desc, tr_desc[np.sort(order[:k])])
-                            maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma)
+                            maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma, map_dtype)
                         record(rid, m, k, seed, img, maps, {"bank_size": int(min(k, len(tr_desc)))}, t, ps)
 
             tr_n = LocalFeatures(desc=tr_desc, offsets=tr.offsets)
@@ -490,14 +584,14 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         with budget(t, "score"):
                             d_te, w_te = nearest_word(te_n.desc, vocab)
                         if ids.get("codebook_dist") and ids["codebook_dist"] not in done:
-                            maps, img = patch_maps(d_te, te.n_images, side, mask_size, sigma)
+                            maps, img = patch_maps(d_te, te.n_images, side, mask_size, sigma, map_dtype)
                             record(ids["codebook_dist"], "codebook_dist", k, seed, img, maps, extra, t, d_te)
                         if ids.get("codebook_norm") and ids["codebook_norm"] not in done:
                             t2 = dict(vt)
                             with budget(t2, "score"):
                                 radius = word_radius(*nearest_word(tr_n.desc, vocab), k)
                                 ns = d_te / radius[w_te]
-                                maps, img = patch_maps(ns, te.n_images, side, mask_size, sigma)
+                                maps, img = patch_maps(ns, te.n_images, side, mask_size, sigma, map_dtype)
                             record(ids["codebook_norm"], "codebook_norm", k, seed, img, maps, extra, t2, ns)
                     if ids.get("hist_knn") and ids["hist_knn"] not in done:
                         t = dict(vt)

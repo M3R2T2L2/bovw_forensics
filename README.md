@@ -18,7 +18,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 | `bovw/encode.py` | `hard`, `soft` (kernel codebook; `knn`, `sigma_scale`), `vlad` (intra-norm); power + L2 normalisation |
 | `bovw/eval/` | Clustering: NMI, ARI, Hungarian accuracy over several seeds |
 | `bovw/anomaly.py` | Unsupervised anomaly detection: PatchCore-style patch kNN, CLS kNN, codebook word distance (raw and radius-normalised), histogram kNN; image/pixel AUROC, per-defect-type AUROC; GPU kNN with NumPy fallback |
-| `bovw/ad_data.py` | MVTec AD and VisA loaders (images, labels, masks) and a synthetic defect set for tests; VisA's official 1-class split is vendored in `bovw/resources/` (from amazon-science/spot-diff, Apache-2.0) |
+| `bovw/ad_data.py` | MVTec AD, VisA and 3CAD loaders (images, labels, masks) and a synthetic defect set for tests; VisA's official 1-class split is vendored in `bovw/resources/` (from amazon-science/spot-diff, Apache-2.0) |
 | `bovw/timing.py` | Wall time, peak RSS, and peak GPU memory for every stage |
 | `bovw/sweep.py` | YAML grid over extractor × K × vocab seed × assignment × encode-param variants (lists in `encode:` expand); per-extractor overrides; appends to `<name>.jsonl`, rewrites `<name>.csv`, skips finished runs; `select_best_variant` for tuning splits |
 | `bovw/plots.py` | `aggregate` over vocab seeds; metric vs. K, soft-assignment sensitivity, cost vs. metric, summary table |
@@ -32,6 +32,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 - `notebooks/02_p0_anomaly_mvtec.ipynb`: anomaly detection on MVTec AD (CC BY-NC-SA 4.0: accept the licence first)
 - `notebooks/03_p0_anomaly_followup.ipynb`: MVTec follow-up: AUPRO, top-k image scores, matched-memory coreset, pill false alarms
 - `notebooks/04_p0_anomaly_visa.ipynb`: preregistered replication on VisA (CC BY 4.0); see `docs/preregistration_visa.md`
+- `notebooks/06_p0_anomaly_3cad.ipynb`: preregistered replication on 3CAD, a dataset neither DINOv2 nor PatchCore was developed on; see `docs/preregistration_3cad.md`
 - `notebooks/05_p0_defect_discovery.ipynb`: unsupervised defect-type discovery on MVTec AD (clusters anomalous images by kind of defect)
 
 Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`

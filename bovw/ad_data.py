@@ -15,6 +15,8 @@ Expected layout (the official archive, extracted):
   <root>/<category>/ground_truth/<defect>/*_mask.png
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,8 +36,92 @@ VISA_URL = "https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/VisA_202209
 VISA_SPLIT_CSV = Path(__file__).resolve().parent / "resources" / "visa_1cls.csv"
 
 
+# 3CAD (Yang et al., AAAI 2025): 3C-product parts from real production lines, MVTec-style layout.
+# Official Google Drive archive (English defect names) from github.com/EnquanYang2022/3CAD.
+# No licence is stated; treat as research use and confirm with the authors before publishing.
+THREECAD_CATEGORIES = ["Aluminum_Camera_Cover", "Aluminum_Ipad", "Aluminum_Middle_Frame", "Aluminum_New_Ipad",
+                       "Aluminum_New_Middle_Frame", "Aluminum_Pc", "Copper_Stator", "Iron_Stator"]
+THREECAD_GDRIVE_ID = "1BIX0H8TZp0wmrAnXPw8_aCAIX1j1Fzwz"
+# (train images, test images) per category, from the 3CAD README, for a load sanity check.
+THREECAD_COUNTS = {"Aluminum_Camera_Cover": (784, 1446), "Aluminum_Ipad": (2096, 2047),
+                   "Aluminum_Middle_Frame": (1548, 1479), "Aluminum_New_Middle_Frame": (1072, 1406),
+                   "Aluminum_New_Ipad": (2233, 4936), "Aluminum_Pc": (1698, 3161),
+                   "Copper_Stator": (409, 959), "Iron_Stator": (653, 1112)}
+
+
+def count_mvtec_style(root: str, category: str) -> tuple[int, int]:
+    base = Path(root) / category
+    n_test = sum(len(_images_in(d)) for d in (base / "test").iterdir() if d.is_dir())
+    return len(_images_in(base / "train" / "good")), n_test
+_IMG_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
 def categories(dataset: str) -> list:
-    return {"mvtec": MVTEC_CATEGORIES, "visa": VISA_CATEGORIES}[dataset]
+    return {"mvtec": MVTEC_CATEGORIES, "visa": VISA_CATEGORIES, "3cad": THREECAD_CATEGORIES}[dataset]
+
+
+def find_root(path: str, marker: str) -> str:
+    """The directory that directly contains `marker` (a category folder), searching two levels down."""
+    p = Path(path)
+    cands = [p] + sorted(c for c in p.iterdir() if c.is_dir()) if p.is_dir() else []
+    cands += [g for c in cands[1:] for g in sorted(c.iterdir()) if g.is_dir()]
+    for c in cands:
+        if (c / marker).is_dir():
+            return str(c)
+    raise FileNotFoundError(f"No folder containing '{marker}' under {path}")
+
+
+def _images_in(d: Path) -> list:
+    return sorted(p for p in d.iterdir() if p.suffix.lower() in _IMG_EXT) if d.is_dir() else []
+
+
+def _find_mask(gt_dir: Path, stem: str) -> Path | None:
+    for name in (f"{stem}_mask", stem):
+        for ext in (".png", ".bmp", ".jpg", ".tif", ".PNG"):
+            q = gt_dir / f"{name}{ext}"
+            if q.exists():
+                return q
+    return None
+
+
+def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int = 256) -> ADSplit:
+    """MVTec-layout loader tolerant of other image formats and mask names (used for 3CAD).
+
+    <root>/<category>/train/good/*, <root>/<category>/test/<type>/*,
+    <root>/<category>/ground_truth/<type>/<stem>[_mask].<ext>; any non-zero mask pixel = anomaly.
+    Images are decoded in parallel (half-resolution JPEG decode when large enough).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    base = Path(root) / category
+    if not base.is_dir():
+        raise FileNotFoundError(f"{base} not found")
+    train_paths = _images_in(base / "train" / "good")
+    tests = [(d.name, p) for d in sorted(x for x in (base / "test").iterdir() if x.is_dir()) for p in _images_in(d)]
+    if not train_paths or not tests:
+        raise FileNotFoundError(f"{base}: expected train/good and test/<type> image folders")
+    cv2.setNumThreads(1)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        train = list(ex.map(lambda q: _read_rgb(q, size, fast=True), train_paths))
+        imgs = list(ex.map(lambda t: _read_rgb(t[1], size, fast=True), tests))
+    labels, masks, types, missing = [], [], [], []
+    for t, p in tests:
+        types.append(t)
+        if t == "good":
+            labels.append(0)
+            masks.append(np.zeros((mask_size, mask_size), np.uint8))
+            continue
+        labels.append(1)
+        mp = _find_mask(base / "ground_truth" / t, p.stem)
+        m = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE) if mp else None
+        if m is None:
+            missing.append(f"{t}/{p.name}")
+            m = np.zeros((mask_size, mask_size), np.uint8)
+        masks.append((cv2.resize(m, (mask_size, mask_size), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8))
+    if missing:
+        raise FileNotFoundError(f"{len(missing)} anomalous images have no mask in {base / 'ground_truth'}, "
+                                f"e.g. {missing[:3]}")
+    return ADSplit(train, imgs, np.array(labels), np.stack(masks), types)
 
 
 @dataclass

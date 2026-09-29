@@ -400,6 +400,80 @@ fig.savefig(f"{cfg['results_dir']}/{cfg['name']}_{CATEGORY}_clusters.png", dpi=1
 ]
 
 
+cells_06 = [
+    md("""# P0 · Anomaly replication on 3CAD (preregistered)
+
+A dataset neither DINOv2 nor PatchCore was developed on: 3CAD (Yang et al., AAAI 2025), 27,039 images of
+3C-product parts from real production lines, 8 categories, 47 defect types. Settings and predictions are
+fixed in [`docs/preregistration_3cad.md`](https://github.com/M3R2T2L2/bovw_forensics/blob/main/docs/preregistration_3cad.md),
+identical to VisA. **Primary image score: mean of the top-10 patch scores.**
+
+| ID | Prediction |
+|---|---|
+| P1 | codebook AUPRO > coreset AUPRO at M = 64, 256, 1024 |
+| P2 | codebook top-10 image AUROC >= coreset - 0.005 at M = 1024 |
+| P3 | codebook pixel AUROC >= coreset at M = 1024 |
+| P4 | codebook within 0.01 of the full bank at K = 1024 (image top-10, pixel, AUPRO) |
+
+**Licence:** none stated by the authors; research use, confirm before publishing.
+**Runtime (T4):** about 3–4 h. Features are cached on the Colab disk (too large for Drive); results go to Drive.
+After a disconnect, run everything again: finished categories are skipped. A High-RAM runtime is safer if you have one."""),
+    *setup_cells(),
+
+    md("## 2 · Data\nDownloads the official archive from Google Drive with `gdown` (or uses a copy you placed in `MyDrive/bovw-forensics/data/`)."),
+    code("""import os, glob, shutil, subprocess
+from bovw import ad_data
+LOCAL = "/content/3cad"
+DRIVE_COPY = glob.glob("/content/drive/MyDrive/bovw-forensics/data/3CAD*")
+ARCHIVE = "/content/3cad_archive"
+
+if not os.path.isdir(LOCAL):
+    if DRIVE_COPY:
+        shutil.copy(DRIVE_COPY[0], ARCHIVE)
+    else:
+        import gdown
+        out = gdown.download(id=ad_data.THREECAD_GDRIVE_ID, output=ARCHIVE, quiet=False)
+        if out is None:
+            raise SystemExit("gdown could not fetch the archive (Drive quota?). Open "
+                             "https://drive.google.com/file/d/" + ad_data.THREECAD_GDRIVE_ID +
+                             " , download it, upload to MyDrive/bovw-forensics/data/ as 3CAD.<ext>, and rerun.")
+    os.makedirs(LOCAL)
+    magic = open(ARCHIVE, "rb").read(4)
+    fmt = "zip" if magic[:2] == b"PK" else ("gztar" if magic[:2] == b"\\x1f\\x8b" else "tar")
+    shutil.unpack_archive(ARCHIVE, LOCAL, fmt)
+    print("archive SHA-256 (record in the paper):", ad_data.sha256sum(ARCHIVE))
+    os.remove(ARCHIVE)
+
+ROOT = ad_data.find_root(LOCAL, "Copper_Stator")
+for c in ad_data.THREECAD_CATEGORIES:
+    got, want = ad_data.count_mvtec_style(ROOT, c), ad_data.THREECAD_COUNTS[c]
+    print(f"{c:<28} train/test {got}  expected {want}  {'OK' if got == want else 'MISMATCH'}")"""),
+
+    md("## 3 · Run"),
+    code("""from bovw.sweep import load_config
+from bovw import anomaly
+
+cfg = load_config("configs/p0_anomaly_3cad.yaml")
+cfg["data"]["root"] = ROOT
+df = anomaly.run(cfg)"""),
+
+    md("## 4 · Preregistered checks"),
+    code("""import pandas as pd
+pd.set_option("display.max_colwidth", 120)
+checks = anomaly.prereg_checks(df)
+checks.to_csv(f"{cfg['results_dir']}/{cfg['name']}_prereg.csv", index=False)
+checks"""),
+
+    md("## 5 · Full table (secondary metrics are exploratory)"),
+    code("""t = anomaly.followup_table(df)
+t.to_csv(f"{cfg['results_dir']}/{cfg['name']}_followup.csv")
+t.round(3)"""),
+    code("""d = df[df.k.fillna(0).astype(int).isin([0, 1024])]
+pd.concat({m: d.pivot_table(index="category", columns="method", values=m)
+           for m in ["image_auroc_top10", "pixel_auroc", "aupro"]}, axis=1).round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -417,3 +491,4 @@ write(cells_02, "02_p0_anomaly_mvtec.ipynb")
 write(cells_03, "03_p0_anomaly_followup.ipynb")
 write(cells_04, "04_p0_anomaly_visa.ipynb")
 write(cells_05, "05_p0_defect_discovery.ipynb")
+write(cells_06, "06_p0_anomaly_3cad.ipynb")
