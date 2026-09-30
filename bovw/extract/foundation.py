@@ -63,16 +63,23 @@ class FoundationExtractor:
     def __call__(self, images, progress: bool = True) -> LocalFeatures:
         import torch
 
-        patches, cls = [], []
         n = len(images)
+        desc = cls = None
+        get = getattr(images, "get_batch", None)  # lazy image sequences decode a batch in parallel
         with torch.inference_mode():
             for s in tqdm(range(0, n, self.batch_size), desc=self.spec.hf_id, disable=not progress):
-                x = self._prep([images[i] for i in range(s, min(s + self.batch_size, n))])
+                idx = list(range(s, min(s + self.batch_size, n)))
+                x = self._prep(get(idx) if get else [images[i] for i in idx])
                 out = self.model(pixel_values=x, output_hidden_states=self.layer != -1)
                 # HF Dinov2 applies the final layernorm to last_hidden_state
                 h = out.last_hidden_state if self.layer == -1 else out.hidden_states[self.layer]
                 h = h.float().cpu().numpy()
-                cls.append(h[:, 0])
-                patches.extend(h[:, self.spec.n_prefix:].astype(np.float16))  # (P, D) per image
-        return LocalFeatures.from_list(patches, global_=np.concatenate(cls).astype(np.float32),
-                                       dtype=np.float16)
+                p = h[:, self.spec.n_prefix:]                       # (B, P, D)
+                if desc is None:  # preallocate once the grid size is known: one copy, no list
+                    desc = np.empty((n, p.shape[1], p.shape[2]), np.float16)
+                    cls = np.empty((n, h.shape[2]), np.float32)
+                desc[s:s + len(idx)] = p
+                cls[s:s + len(idx)] = h[:, 0]
+        per = desc.shape[1]
+        return LocalFeatures(desc=desc.reshape(n * per, -1), offsets=np.arange(n + 1, dtype=np.int64) * per,
+                             global_=cls)

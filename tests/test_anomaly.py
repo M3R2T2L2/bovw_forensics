@@ -325,3 +325,50 @@ def test_mvtec_style_loader_3cad_layout(tmp_path):
     (cat / "ground_truth/scratch/d.png").unlink()
     with pytest.raises(FileNotFoundError, match="no mask"):
         ad_data.load_mvtec_style(root, "Copper_Stator", size=64, mask_size=32)
+
+
+def test_lazy_images_match_eager(tmp_path):
+    import cv2
+
+    cat = tmp_path / "Copper_Stator"
+    for sub in ["train/good", "test/good", "test/scratch", "ground_truth/scratch"]:
+        (cat / sub).mkdir(parents=True)
+    rng = np.random.default_rng(0)
+    for p in ["train/good/a.png", "train/good/b.png", "test/good/c.png", "test/scratch/d.png"]:
+        cv2.imwrite(str(cat / p), rng.integers(0, 255, (90, 70, 3), dtype=np.uint8))
+    cv2.imwrite(str(cat / "ground_truth/scratch/d_mask.png"), np.full((90, 70), 255, np.uint8))
+    e = ad_data.load_mvtec_style(str(tmp_path), "Copper_Stator", size=32, mask_size=16)
+    z = ad_data.load_mvtec_style(str(tmp_path), "Copper_Stator", size=32, mask_size=16, lazy=True)
+    assert isinstance(z.train_images, ad_data.LazyImages) and len(z.test_images) == 2
+    for a, b in zip(e.train_images + e.test_images, list(z.train_images) + z.test_images.get_batch([0, 1])):
+        assert np.array_equal(a, b)
+    assert np.array_equal(e.test_masks, z.test_masks) and z.test_images[0:1][0].shape == (32, 32, 3)
+
+
+def test_foundation_extractor_preallocated_output():
+    torch = pytest.importorskip("torch")
+    from bovw.extract import foundation
+
+    class Out:
+        def __init__(self, h):
+            self.last_hidden_state = h
+
+    class Fake(torch.nn.Module):  # 1 CLS + 4 patch tokens, dim 3, value = image mean + token index
+        def forward(self, pixel_values, output_hidden_states=False):
+            b = pixel_values.shape[0]
+            m = pixel_values.mean(dim=(1, 2, 3)).view(b, 1, 1)
+            return Out(m + torch.arange(5.0).view(1, 5, 1).expand(b, 5, 3))
+
+    ex = foundation.FoundationExtractor.__new__(foundation.FoundationExtractor)
+    ex.spec, ex.image_size, ex.batch_size, ex.layer = foundation.BACKBONES["dinov2_s"], 16, 3, -1
+    ex.device, ex.dtype, ex.model = "cpu", torch.float32, Fake()
+    ex.mean = torch.zeros(1, 3, 1, 1)
+    ex.std = torch.ones(1, 3, 1, 1)
+    imgs = [np.full((16, 16, 3), 25 * i, np.uint8) for i in range(7)]   # 7 = 3 + 3 + 1: uneven last batch
+    f = ex(imgs, progress=False)
+    assert f.desc.shape == (28, 3) and f.desc.dtype == np.float16 and list(f.offsets) == [0, 4, 8, 12, 16, 20, 24, 28]
+    assert f.global_.shape == (7, 3)
+    for i in range(7):
+        mean = 25 * i / 255.0
+        assert np.allclose(f.desc[4 * i:4 * i + 4, 0], mean + np.arange(1, 5), atol=1e-2)
+        assert np.isclose(f.global_[i, 0], mean, atol=1e-5)

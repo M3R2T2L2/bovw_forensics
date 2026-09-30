@@ -64,6 +64,14 @@ def _torch_cuda():
         return None
 
 
+def _to_cuda_f32(torch, x: np.ndarray, chunk: int = 262144):
+    """Copy rows to a float32 CUDA tensor chunk by chunk (no full float32 copy in host RAM)."""
+    out = torch.empty((len(x), x.shape[1]), dtype=torch.float32, device="cuda")
+    for i in range(0, len(x), chunk):
+        out[i:i + chunk] = torch.from_numpy(np.ascontiguousarray(x[i:i + chunk], dtype=np.float32)).cuda()
+    return out
+
+
 def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk: int = 65536) -> np.ndarray:
     """Euclidean distance from each query row to its nearest bank row (exact).
 
@@ -73,7 +81,7 @@ def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk
     torch = _torch_cuda()
     out = np.empty(len(queries), np.float32)
     if torch is not None:
-        b_all = torch.from_numpy(np.ascontiguousarray(bank, dtype=np.float32)).cuda()
+        b_all = _to_cuda_f32(torch, bank)
         b_sq = (b_all * b_all).sum(1)
         for i in range(0, len(queries), q_chunk):
             q = torch.from_numpy(np.ascontiguousarray(queries[i:i + q_chunk], dtype=np.float32)).cuda()
@@ -118,9 +126,13 @@ def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, ch
     first = int(rng.integers(n))
     torch = _torch_cuda()
     if torch is not None:
-        z = torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)).cuda()
         if proj is not None:
-            z = z @ torch.from_numpy(proj).cuda()
+            p_t = torch.from_numpy(proj).cuda()
+            z = torch.empty((n, proj.shape[1]), dtype=torch.float32, device="cuda")
+            for i in range(0, n, chunk):
+                z[i:i + chunk] = _to_cuda_f32(torch, x[i:i + chunk]) @ p_t
+        else:
+            z = _to_cuda_f32(torch, x)
         mind = torch.full((n,), float("inf"), device="cuda")
         sel = [first]
         for _ in range(m - 1):
@@ -406,7 +418,7 @@ class _LazyAD:
                                                  self.cfg.get("mask_size", 256))
             elif name == "3cad":
                 self._split = ad_data.load_mvtec_style(self.cfg["root"], self.category, self.cfg.get("size", 448),
-                                                       self.cfg.get("mask_size", 256))
+                                                       self.cfg.get("mask_size", 256), lazy=True)
             elif name == "visa":
                 self._split = ad_data.load_visa(self.cfg["root"], self.category, self.cfg.get("size", 448),
                                                 self.cfg.get("mask_size", 256))

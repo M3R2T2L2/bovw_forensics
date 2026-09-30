@@ -46,3 +46,11 @@ after the run, and any further analysis is labelled exploratory.
 
 No licence is stated in the 3CAD repository. Results are for research; confirm
 terms with the authors before publication.
+
+## Amendment log
+
+- 2026-09-30: memory-only fixes after the Colab kernel ran out of RAM on the
+  second category (Aluminum_Ipad): images are decoded lazily in batches instead
+  of all at once, DINOv2 features are written into one preallocated buffer, and
+  the memory bank is copied to the GPU in chunks. Computations and settings are
+  unchanged; Aluminum_Camera_Cover was completed before the fix and is kept.

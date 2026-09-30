@@ -84,7 +84,36 @@ def _find_mask(gt_dir: Path, stem: str) -> Path | None:
     return None
 
 
-def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int = 256) -> ADSplit:
+class LazyImages:
+    """A list-like sequence of image paths decoded on access (keeps RAM flat for large datasets).
+
+    get_batch(indices) decodes a batch with a small thread pool; extractors use it when present.
+    """
+
+    def __init__(self, paths: list, size: int, fast: bool = True, workers: int = 4):
+        self.paths, self.size, self.fast, self.workers = list(paths), size, fast, workers
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(len(self)))]
+        return _read_rgb(self.paths[i], self.size, fast=self.fast)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+    def get_batch(self, indices) -> list:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=self.workers) as ex:
+            return list(ex.map(self.__getitem__, indices))
+
+
+def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int = 256,
+                     lazy: bool = False) -> ADSplit:
     """MVTec-layout loader tolerant of other image formats and mask names (used for 3CAD).
 
     <root>/<category>/train/good/*, <root>/<category>/test/<type>/*,
@@ -101,9 +130,12 @@ def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int =
     if not train_paths or not tests:
         raise FileNotFoundError(f"{base}: expected train/good and test/<type> image folders")
     cv2.setNumThreads(1)
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        train = list(ex.map(lambda q: _read_rgb(q, size, fast=True), train_paths))
-        imgs = list(ex.map(lambda t: _read_rgb(t[1], size, fast=True), tests))
+    if lazy:
+        train, imgs = LazyImages(train_paths, size), LazyImages([p for _, p in tests], size)
+    else:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            train = list(ex.map(lambda q: _read_rgb(q, size, fast=True), train_paths))
+            imgs = list(ex.map(lambda t: _read_rgb(t[1], size, fast=True), tests))
     labels, masks, types, missing = [], [], [], []
     for t, p in tests:
         types.append(t)
