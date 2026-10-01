@@ -94,15 +94,15 @@ def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk
         del b_all, b_sq
         torch.cuda.empty_cache()
         return out
-    bank = np.asarray(bank, np.float32)
-    b_sq = (bank * bank).sum(1)
+    bc = b_chunk // 4
+    b_sq = np.concatenate([(np.asarray(bank[j:j + bc], np.float32) ** 2).sum(1) for j in range(0, len(bank), bc)])
     q_chunk = min(q_chunk, 1024)
     for i in range(0, len(queries), q_chunk):
         q = np.asarray(queries[i:i + q_chunk], np.float32)
         q_sq = (q * q).sum(1, keepdims=True)
         best = np.full(len(q), np.inf, np.float32)
-        for j in range(0, len(bank), b_chunk // 4):
-            d = q_sq - 2.0 * q @ bank[j:j + b_chunk // 4].T + b_sq[None, j:j + b_chunk // 4]
+        for j in range(0, len(bank), bc):  # bank chunks converted on the fly: no full float32 copy
+            d = q_sq - 2.0 * q @ np.asarray(bank[j:j + bc], np.float32).T + b_sq[None, j:j + bc]
             np.minimum(best, d.min(1), out=best)
         out[i:i + q_chunk] = np.sqrt(np.maximum(best, 0))
     return out
@@ -469,6 +469,9 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     save_maps_for = set(cfg.get("save_maps_for", []))
     cache_vocab = bool(cfg.get("cache_vocab", False))
     low_mem = bool(cfg.get("low_memory", False))
+    if cfg.get("require_gpu") and _torch_cuda() is None:
+        raise RuntimeError("No GPU found. This run needs a GPU runtime (Colab: Runtime > Change runtime type > "
+                           "T4 GPU). On CPU, DINOv2 extraction alone takes hours per category.")
     map_dtype = np.float16 if low_mem else np.float32
     (out_dir / "maps").mkdir(exist_ok=True)
     sigma = cfg.get("smoothing_sigma", 4.0)

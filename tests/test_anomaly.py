@@ -372,3 +372,19 @@ def test_foundation_extractor_preallocated_output():
         mean = 25 * i / 255.0
         assert np.allclose(f.desc[4 * i:4 * i + 4, 0], mean + np.arange(1, 5), atol=1e-2)
         assert np.isclose(f.global_[i, 0], mean, atol=1e-5)
+
+
+def test_require_gpu_stops_on_cpu(tmp_path, monkeypatch):
+    monkeypatch.setattr(anomaly, "_torch_cuda", lambda: None)
+    cfg = {"name": "g", "require_gpu": True, "data": {"name": "synthetic", "categories": ["tex"]},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"), "extractors": [], "methods": {}}
+    with pytest.raises(RuntimeError, match="No GPU"):
+        anomaly.run(cfg, progress=False)
+
+
+def test_min_dist_cpu_chunked_matches_bruteforce():
+    rng = np.random.default_rng(1)
+    q, b = rng.normal(size=(300, 16)).astype(np.float16), rng.normal(size=(5000, 16)).astype(np.float16)
+    got = anomaly.min_dist(q, b, q_chunk=64, b_chunk=4096)
+    want = np.sqrt(((q.astype(np.float32)[:, None] - b.astype(np.float32)[None]) ** 2).sum(-1)).min(1)
+    assert np.allclose(got, want, atol=1e-3)

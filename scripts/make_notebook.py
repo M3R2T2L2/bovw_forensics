@@ -421,7 +421,9 @@ After a disconnect, run everything again: finished categories are skipped. A Hig
     *setup_cells(),
 
     md("## 2 · Data\nDownloads the official archive from Google Drive with `gdown` (or uses a copy you placed in `MyDrive/bovw-forensics/data/`)."),
-    code("""import os, glob, shutil, subprocess
+    code("""import os, glob, shutil, subprocess, torch
+if not torch.cuda.is_available():   # check before the long download
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
 from bovw import ad_data
 LOCAL = "/content/3cad"
 DRIVE_COPY = glob.glob("/content/drive/MyDrive/bovw-forensics/data/3CAD*")
@@ -452,6 +454,12 @@ for c in ad_data.THREECAD_CATEGORIES:
     md("## 3 · Run"),
     code("""from bovw.sweep import load_config
 from bovw import anomaly
+
+import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all. "
+                     "(On CPU, feature extraction takes hours per category.)")
+print("GPU:", torch.cuda.get_device_name(0))
 
 cfg = load_config("configs/p0_anomaly_3cad.yaml")
 cfg["data"]["root"] = ROOT

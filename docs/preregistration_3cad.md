@@ -54,3 +54,8 @@ terms with the authors before publication.
   of all at once, DINOv2 features are written into one preallocated buffer, and
   the memory bank is copied to the GPU in chunks. Computations and settings are
   unchanged; Aluminum_Camera_Cover was completed before the fix and is kept.
+- 2026-09-30: Aluminum_Ipad and Aluminum_Middle_Frame completed on a T4 after the
+  memory fix. A later session started on a CPU-only runtime and was stopped by
+  memory during Aluminum_New_Ipad scoring; nothing from it was recorded. The run
+  now refuses to start without a GPU, and the CPU kNN path no longer copies the
+  whole bank to float32. No settings changed.

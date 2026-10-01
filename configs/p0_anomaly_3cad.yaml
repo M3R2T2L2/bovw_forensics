@@ -29,6 +29,7 @@ region_metrics: true
 image_topk: [1, 3, 10, 30]     # primary: 10 (preregistered)
 cache_vocab: true
 low_memory: true
+require_gpu: true             # stop at once on a CPU-only runtime
 
 methods:
   patch_knn: {}
