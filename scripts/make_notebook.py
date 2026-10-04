@@ -482,6 +482,41 @@ pd.concat({m: d.pivot_table(index="category", columns="method", values=m)
 ]
 
 
+cells_07 = [
+    md("""# P0 · Hybrid memory: visual words + real patches (exploratory)
+
+One memory bank of M vectors: **half visual words** (k-means averages, which cover the common middle of
+normal appearance) and **half real patches**, picked greedily as the normal patches the words cover *worst*
+(rare-but-normal details). A test patch is scored by its distance to the nearest item of either kind.
+
+Compared at the same M (64, 256, 1,024) with the codebook and coreset results already on Drive.
+Reuses cached features: **no dataset download**. Runtime (T4): about 1.5–2 h for MVTec AD + VisA, mostly k-means.
+Exploratory (designed after seeing these datasets); a confirmatory test should be preregistered."""),
+    *setup_cells(),
+
+    md("## 2 · Run (MVTec AD, then VisA)"),
+    code("""import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+from bovw.sweep import load_config
+from bovw import anomaly
+
+results = {}
+for ds in ["mvtec", "visa"]:
+    cfg = load_config(f"configs/p0_hybrid_{ds}.yaml")
+    results[ds] = anomaly.run(cfg)"""),
+
+    md("## 3 · Compare with codebook and coreset\nMeans over categories and 3 seeds; `hybrid_w50` = 50% words, 50% real patches."),
+    code("""import pandas as pd
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+base = {"mvtec": "p0_anomaly_mvtec_v2.csv", "visa": "p0_anomaly_visa.csv"}
+tables = {ds: anomaly.hybrid_compare(pd.read_csv(f"{RES}/{base[ds]}"), results[ds]) for ds in results}
+out = pd.concat(tables, names=["dataset"])
+out.to_csv(f"{RES}/p0_hybrid_compare.csv")
+out.round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -500,3 +535,4 @@ write(cells_03, "03_p0_anomaly_followup.ipynb")
 write(cells_04, "04_p0_anomaly_visa.ipynb")
 write(cells_05, "05_p0_defect_discovery.ipynb")
 write(cells_06, "06_p0_anomaly_3cad.ipynb")
+write(cells_07, "07_p0_hybrid.ipynb")

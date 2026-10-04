@@ -22,6 +22,8 @@ Methods
   coreset_knn      Matched-memory baseline: PatchCore's greedy k-center coreset of M
                    normal patches (M = K), then nearest-neighbour distance to it.
   random_knn       Matched-memory baseline: M normal patches sampled uniformly.
+  hybrid_wNN       One memory of M vectors: NN% visual words + the rest real patches,
+                   chosen greedily as those the words cover worst (residual coreset).
 
 Pixel maps: patch scores on the feature grid, bilinear upsampling to the mask
 size, Gaussian smoothing (sigma=4, as in PatchCore). Image score: max patch score.
@@ -50,6 +52,10 @@ PATCH_METHODS = ("patch_knn", "codebook_dist", "codebook_norm")
 IMAGE_METHODS = ("global_knn", "hist_knn")
 CODEBOOK_METHODS = ("codebook_dist", "codebook_norm", "hist_knn")
 SUBSAMPLE_METHODS = ("coreset_knn", "random_knn")
+
+
+def hybrid_name(word_fraction: float) -> str:
+    return f"hybrid_w{int(round(word_fraction * 100))}"
 HANDCRAFTED = {"sift", "dense_sift", "orb"}  # no global embedding
 
 
@@ -108,12 +114,16 @@ def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk
     return out
 
 
-def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, chunk: int = 262144) -> np.ndarray:
+def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, chunk: int = 262144,
+                   init_centers: np.ndarray | None = None) -> np.ndarray:
     """Indices of a greedy k-center coreset (PatchCore, Roth et al. 2022).
 
     Features are first mapped by a Gaussian random projection to `proj_dim`
     dimensions (as in PatchCore) to speed up the distance updates. Greedy
     selection is nested: the first m' < m indices are the size-m' coreset.
+
+    init_centers (e.g. visual words): selection starts as if these were already
+    chosen, so it picks the patches they cover worst (a residual coreset).
     """
     n = len(x)
     m = min(m, n)
@@ -124,6 +134,12 @@ def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, ch
     else:
         proj = None
     first = int(rng.integers(n))
+    if m <= 0:
+        return np.zeros(0, np.int64)
+    cz = None
+    if init_centers is not None and len(init_centers):
+        cz = np.asarray(init_centers, np.float32)
+        cz = cz @ proj if proj is not None else cz
     torch = _torch_cuda()
     if torch is not None:
         if proj is not None:
@@ -133,12 +149,22 @@ def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, ch
                 z[i:i + chunk] = _to_cuda_f32(torch, x[i:i + chunk]) @ p_t
         else:
             z = _to_cuda_f32(torch, x)
-        mind = torch.full((n,), float("inf"), device="cuda")
-        sel = [first]
-        for _ in range(m - 1):
-            c = z[sel[-1]]
-            mind = torch.minimum(mind, ((z - c) ** 2).sum(1))
-            sel.append(int(mind.argmax()))
+        if cz is None:
+            sel = [first]
+            mind = ((z - z[first]) ** 2).sum(1)
+        else:
+            c_t = torch.from_numpy(cz).cuda()
+            c_sq = (c_t * c_t).sum(1)
+            mind = torch.empty(n, device="cuda")
+            for i in range(0, n, chunk):
+                zc = z[i:i + chunk]
+                dd = (zc * zc).sum(1, keepdim=True) - 2.0 * zc @ c_t.T + c_sq[None, :]
+                mind[i:i + chunk] = dd.min(1).values.clamp_min(0)
+            sel = []
+        while len(sel) < m:
+            nxt = int(mind.argmax())
+            sel.append(nxt)
+            mind = torch.minimum(mind, ((z - z[nxt]) ** 2).sum(1))
         del z, mind
         torch.cuda.empty_cache()
         return np.array(sel, np.int64)
@@ -146,11 +172,20 @@ def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, ch
     for i in range(0, n, chunk):
         blk = np.asarray(x[i:i + chunk], np.float32)
         z[i:i + chunk] = blk @ proj if proj is not None else blk
-    mind = np.full(n, np.inf, np.float32)
-    sel = [first]
-    for _ in range(m - 1):
-        np.minimum(mind, ((z - z[sel[-1]]) ** 2).sum(1), out=mind)
-        sel.append(int(mind.argmax()))
+    if cz is None:
+        sel = [first]
+        mind = ((z - z[first]) ** 2).sum(1)
+    else:
+        c_sq = (cz * cz).sum(1)
+        mind = np.empty(n, np.float32)
+        for i in range(0, n, chunk):
+            zc = z[i:i + chunk]
+            mind[i:i + chunk] = np.maximum(((zc * zc).sum(1, keepdims=True) - 2.0 * zc @ cz.T + c_sq[None]).min(1), 0)
+        sel = []
+    while len(sel) < m:
+        nxt = int(mind.argmax())
+        sel.append(nxt)
+        np.minimum(mind, ((z - z[nxt]) ** 2).sum(1), out=mind)
     return np.array(sel, np.int64)
 
 
@@ -463,6 +498,9 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     sub_cfg = methods.get("subsample", {})
     sub_sizes = sorted(sub_cfg.get("sizes", ks)) if sub_cfg else []
     sub_methods = [m for m in SUBSAMPLE_METHODS if m in sub_cfg.get("methods", SUBSAMPLE_METHODS)] if sub_cfg else []
+    hyb_cfg = methods.get("hybrid", {})
+    hyb_sizes = sorted(hyb_cfg.get("sizes", [])) if hyb_cfg else []
+    hyb_fracs = [float(f) for f in hyb_cfg.get("word_fractions", [0.5])] if hyb_cfg else []
     normalize = cfg.get("normalize", True)
     topks = [int(k) for k in cfg.get("image_topk", [])]
     region = bool(cfg.get("region_metrics", False))
@@ -489,7 +527,9 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
             todo_ids = ([_run_id(cfg["name"], cat, ex_name, m, 0, 0) for m in baselines]
                         + [_run_id(cfg["name"], cat, ex_name, m, k, s) for m in cb_methods for k in ks for s in seeds]
                         + [_run_id(cfg["name"], cat, ex_name, m, k, s)
-                           for m in sub_methods for k in sub_sizes for s in seeds])
+                           for m in sub_methods for k in sub_sizes for s in seeds]
+                        + [_run_id(cfg["name"], cat, ex_name, hybrid_name(f), k, s)
+                           for f in hyb_fracs for k in hyb_sizes for s in seeds])
             if all(r in done for r in todo_ids):
                 continue
 
@@ -614,6 +654,33 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                             img = min_dist(hard(te_n, vocab), hard(tr_n, vocab))
                         record(ids["hist_knn"], "hist_knn", k, seed, img, None, extra, t)
                     del vocab
+
+            # hybrid: K = f*M visual words + (1-f)*M real patches the words cover worst, one memory
+            for f in hyb_fracs:
+                for M in hyb_sizes:
+                    for seed in seeds:
+                        rid = _run_id(cfg["name"], cat, ex_name, hybrid_name(f), M, seed)
+                        if rid in done:
+                            continue
+                        kw = max(1, min(M, int(round(M * f))))
+                        kp = M - kw
+                        vkey = {"tag": tag, "extractor": ex_name, "params": cache_params, "normalize": normalize,
+                                "k": kw, "seed": seed, "vocab": vocab_cfg}
+                        vocab, vt = cached_vocabulary(cache_dir if cache_vocab else None, vkey,
+                                                      lambda: build_vocabulary(tr_desc, kw, seed=seed, **vocab_cfg))
+                        if vocab.pca is not None:
+                            raise ValueError("hybrid needs words in the patch space (no PCA)")
+                        t = dict(vt)
+                        with budget(t, "select"):
+                            picks = greedy_coreset(tr_desc, kp, seed=seed, init_centers=vocab.centers)
+                        bank = np.concatenate([vocab.centers.astype(np.float32),
+                                               np.asarray(tr_desc[np.sort(picks)], np.float32)])
+                        with budget(t, "score"):
+                            ps = min_dist(te_desc, bank)
+                            maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma, map_dtype)
+                        record(rid, hybrid_name(f), M, seed, img, maps,
+                               {"n_words": kw, "n_patches": kp, "bank_size": int(len(bank))}, t, ps)
+                        del vocab, bank
             del tr, te, tr_desc, te_desc, tr_n, te_n
             gc.collect()
 
@@ -704,3 +771,15 @@ def prereg_checks(df: pd.DataFrame, tol_image: float = 0.005, tol_full: float = 
     rows.append(("P4", f"codebook within {tol_full} of full bank (K = 1024)",
                  "; ".join(f"{c} gap {g:+.3f}" for c, g in gaps.items()), all(g <= tol_full for g in gaps.values())))
     return pd.DataFrame(rows, columns=["id", "prediction", "observed", "pass"])
+
+
+def hybrid_compare(base: pd.DataFrame, hyb: pd.DataFrame) -> pd.DataFrame:
+    """Codebook, coreset and hybrid side by side at each memory size (means over categories, then seeds)."""
+    keep = ["codebook_dist", "coreset_knn", "patch_knn"]
+    d = pd.concat([base[base.method.isin(keep)], hyb], ignore_index=True)
+    cols = [c for c in ["image_auroc", "image_auroc_top10", "pixel_auroc", "aupro"] if c in d]
+    d["k"] = d["k"].fillna(0).astype(int)
+    per_seed = d.groupby(["method", "k", "vocab_seed"])[cols].mean()
+    t = per_seed.groupby(level=[0, 1]).mean()
+    t.columns = [c.replace("image_auroc", "img").replace("pixel_auroc", "pix") for c in t.columns]
+    return t.sort_index(level=[1, 0])

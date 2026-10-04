@@ -56,3 +56,9 @@ def test_notebook_06_3cad():
     assert "p0_anomaly_3cad.yaml" in src and "df = anomaly.run(cfg)" in src
     assert "THREECAD_GDRIVE_ID" in src and "anomaly.prereg_checks" in src and "count_mvtec_style" in src
     assert "VISA_URL" not in src and "df = run(cfg)" not in src
+
+
+def test_notebook_07_hybrid():
+    src = _code("07_p0_hybrid.ipynb")
+    assert "p0_hybrid_{ds}.yaml" in src and "anomaly.hybrid_compare" in src
+    assert "ensure_archive" not in src and "df = run(cfg)" not in src

@@ -388,3 +388,32 @@ def test_min_dist_cpu_chunked_matches_bruteforce():
     got = anomaly.min_dist(q, b, q_chunk=64, b_chunk=4096)
     want = np.sqrt(((q.astype(np.float32)[:, None] - b.astype(np.float32)[None]) ** 2).sum(-1)).min(1)
     assert np.allclose(got, want, atol=1e-3)
+
+
+def test_residual_coreset_fills_what_words_miss():
+    rng = np.random.default_rng(0)
+    common = rng.normal(0, 0.05, (2000, 8))
+    rare = rng.normal(0, 0.05, (5, 8)) + 3.0           # a rare-but-normal mode
+    x = np.concatenate([common, rare]).astype(np.float32)
+    words = np.zeros((1, 8), np.float32)                # one word at the common mode
+    sel = anomaly.greedy_coreset(x, 1, seed=0, proj_dim=0, init_centers=words)
+    assert sel[0] >= 2000                               # first pick = the rare mode
+    plain = anomaly.greedy_coreset(x, 3, seed=0, proj_dim=0)
+    assert list(anomaly.greedy_coreset(x, 2, seed=0, proj_dim=0)) == list(plain[:2])   # default unchanged
+    assert len(anomaly.greedy_coreset(x, 0, seed=0, init_centers=words)) == 0
+
+
+def test_hybrid_run(tmp_path):
+    cfg = {"name": "h", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                 "n_train": 20, "n_good": 10, "n_bad": 10},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"), "cache_vocab": True,
+           "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+           "region_metrics": True, "image_topk": [10],
+           "methods": {"hybrid": {"sizes": [16, 32], "word_fractions": [0.5, 0.75]}},
+           "vocab": {"seeds": [0, 1], "max_descriptors": 20000, "spherical": True}}
+    df = anomaly.run(cfg, progress=False)
+    assert set(df.method) == {"hybrid_w50", "hybrid_w75"} and len(df) == 2 * 2 * 2
+    r = df[(df.method == "hybrid_w75") & (df.k == 32)].iloc[0]
+    assert (r.n_words, r.n_patches, r.bank_size) == (24, 8, 32)
+    assert df[["image_auroc_top10", "aupro"]].notna().all().all()
+    assert len(anomaly.run(cfg, progress=False)) == len(df)
