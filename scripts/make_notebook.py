@@ -517,6 +517,55 @@ out.round(3)"""),
 ]
 
 
+def _cells_06_data():
+    """The 3CAD data section of notebook 06 (GPU check, download, count check), copied."""
+    import copy
+    i = next(j for j, c in enumerate(cells_06) if c["cell_type"] == "markdown" and c["source"].startswith("## 2 · Data"))
+    return [copy.deepcopy(cells_06[i]), copy.deepcopy(cells_06[i + 1])]
+
+
+cells_08 = [
+    md("""# P0 · Hybrid memory on 3CAD (preregistered)
+
+Confirmatory test of the 75/25 hybrid (75% visual words + 25% real patches the words cover worst),
+designed on MVTec AD and VisA. Predictions are fixed in
+[`docs/preregistration_hybrid_3cad.md`](https://github.com/M3R2T2L2/bovw_forensics/blob/main/docs/preregistration_hybrid_3cad.md).
+**Primary image score: the maximum patch score.**
+
+| ID | Prediction |
+|---|---|
+| H1 | hybrid max-score image AUROC >= coreset at M = 256 and 1,024 |
+| H2 | hybrid max-score image AUROC > codebook at M = 1,024 |
+| H3 | hybrid AUPRO >= codebook - 0.02 at M = 256 and 1,024 |
+| H4 | hybrid AUPRO > coreset at M = 256 and 1,024 |
+
+Codebook and coreset are rerun here on the same features. **Runtime (T4):** about 4–5 h (feature extraction
+about 3 h). Needs a GPU runtime; after a disconnect, Run all again: finished runs are skipped."""),
+    *setup_cells(),
+    *_cells_06_data(),
+
+    md("## 3 · Run"),
+    code("""from bovw.sweep import load_config
+from bovw import anomaly
+
+cfg = load_config("configs/p0_hybrid_3cad.yaml")
+cfg["data"]["root"] = ROOT
+df = anomaly.run(cfg)"""),
+
+    md("## 4 · Preregistered checks"),
+    code("""import pandas as pd
+pd.set_option("display.max_colwidth", 120)
+checks = anomaly.prereg_checks_hybrid(df)
+checks.to_csv(f"{cfg['results_dir']}/{cfg['name']}_prereg.csv", index=False)
+checks"""),
+
+    md("## 5 · Full table (secondary metrics are exploratory)"),
+    code("""t = anomaly.followup_table(df)
+t.to_csv(f"{cfg['results_dir']}/{cfg['name']}_followup.csv")
+t.round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -536,3 +585,4 @@ write(cells_04, "04_p0_anomaly_visa.ipynb")
 write(cells_05, "05_p0_defect_discovery.ipynb")
 write(cells_06, "06_p0_anomaly_3cad.ipynb")
 write(cells_07, "07_p0_hybrid.ipynb")
+write(cells_08, "08_p0_hybrid_3cad.ipynb")

@@ -62,3 +62,10 @@ def test_notebook_07_hybrid():
     src = _code("07_p0_hybrid.ipynb")
     assert "p0_hybrid_{ds}.yaml" in src and "anomaly.hybrid_compare" in src
     assert "ensure_archive" not in src and "df = run(cfg)" not in src
+
+
+def test_notebook_08_hybrid_3cad():
+    src = _code("08_p0_hybrid_3cad.ipynb")
+    assert "p0_hybrid_3cad.yaml" in src and "anomaly.prereg_checks_hybrid" in src
+    assert "THREECAD_GDRIVE_ID" in src and "torch.cuda.is_available" in src
+    assert "df = run(cfg)" not in src

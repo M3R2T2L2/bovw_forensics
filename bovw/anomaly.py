@@ -783,3 +783,34 @@ def hybrid_compare(base: pd.DataFrame, hyb: pd.DataFrame) -> pd.DataFrame:
     t = per_seed.groupby(level=[0, 1]).mean()
     t.columns = [c.replace("image_auroc", "img").replace("pixel_auroc", "pix") for c in t.columns]
     return t.sort_index(level=[1, 0])
+
+
+def prereg_checks_hybrid(df: pd.DataFrame, method: str = "hybrid_w75", tol_aupro: float = 0.02) -> pd.DataFrame:
+    """The four preregistered hybrid predictions (docs/preregistration_hybrid_3cad.md), pass/fail.
+
+    Detection uses the maximum patch score (image_auroc), localization uses AUPRO.
+    """
+    d = df.copy()
+    d["k"] = d["k"].fillna(0).astype(int)
+    m = d.groupby(["method", "k", "vocab_seed"])[["image_auroc", "aupro"]].mean().groupby(level=[0, 1]).mean()
+
+    def v(meth, k, col):
+        return float(m.loc[(meth, k), col])
+
+    sizes = (256, 1024)
+    rows = []
+    obs = {k: (v(method, k, "image_auroc"), v("coreset_knn", k, "image_auroc")) for k in sizes}
+    rows.append(("H1", "hybrid max-score image AUROC >= coreset at M = 256, 1024",
+                 "; ".join(f"M={k}: {a:.3f} vs {b:.3f}" for k, (a, b) in obs.items()),
+                 all(a >= b for a, b in obs.values())))
+    a, b = v(method, 1024, "image_auroc"), v("codebook_dist", 1024, "image_auroc")
+    rows.append(("H2", "hybrid max-score image AUROC > codebook at M = 1024", f"{a:.3f} vs {b:.3f}", a > b))
+    obs = {k: (v(method, k, "aupro"), v("codebook_dist", k, "aupro")) for k in sizes}
+    rows.append(("H3", f"hybrid AUPRO >= codebook - {tol_aupro} at M = 256, 1024",
+                 "; ".join(f"M={k}: {a:.3f} vs {b:.3f}" for k, (a, b) in obs.items()),
+                 all(a >= b - tol_aupro for a, b in obs.values())))
+    obs = {k: (v(method, k, "aupro"), v("coreset_knn", k, "aupro")) for k in sizes}
+    rows.append(("H4", "hybrid AUPRO > coreset at M = 256, 1024",
+                 "; ".join(f"M={k}: {a:.3f} vs {b:.3f}" for k, (a, b) in obs.items()),
+                 all(a > b for a, b in obs.values())))
+    return pd.DataFrame(rows, columns=["id", "prediction", "observed", "pass"])

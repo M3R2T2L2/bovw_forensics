@@ -417,3 +417,16 @@ def test_hybrid_run(tmp_path):
     assert (r.n_words, r.n_patches, r.bank_size) == (24, 8, 32)
     assert df[["image_auroc_top10", "aupro"]].notna().all().all()
     assert len(anomaly.run(cfg, progress=False)) == len(df)
+
+
+def test_prereg_checks_hybrid():
+    import pandas as pd
+
+    vals = {"codebook_dist": (0.95, 0.90), "coreset_knn": (0.96, 0.80), "hybrid_w75": (0.97, 0.89)}
+    rows = [{"method": m, "k": k, "vocab_seed": s, "category": c, "image_auroc": img, "aupro": au}
+            for m, (img, au) in vals.items() for k in (256, 1024) for s in (0, 1, 2) for c in "ab"]
+    r = anomaly.prereg_checks_hybrid(pd.DataFrame(rows)).set_index("id")["pass"].to_dict()
+    assert r == {"H1": True, "H2": True, "H3": True, "H4": True}
+    rows = [dict(x, aupro=0.85) if x["method"] == "hybrid_w75" else x for x in rows]
+    r = anomaly.prereg_checks_hybrid(pd.DataFrame(rows)).set_index("id")["pass"].to_dict()
+    assert r["H3"] is False and r["H4"] is True
