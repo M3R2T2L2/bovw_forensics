@@ -490,7 +490,7 @@ normal appearance) and **half real patches**, picked greedily as the normal patc
 (rare-but-normal details). A test patch is scored by its distance to the nearest item of either kind.
 
 Compared at the same M (64, 256, 1,024) with the codebook and coreset results already on Drive.
-Reuses cached features: **no dataset download**. Runtime (T4): about 1.5–2 h for MVTec AD + VisA, mostly k-means.
+Reuses cached features: **no dataset download**. Runtime (T4): about 1.5–2 h per word fraction for MVTec AD + VisA, mostly k-means; finished runs are skipped.
 Exploratory (designed after seeing these datasets); a confirmatory test should be preregistered."""),
     *setup_cells(),
 
@@ -506,7 +506,7 @@ for ds in ["mvtec", "visa"]:
     cfg = load_config(f"configs/p0_hybrid_{ds}.yaml")
     results[ds] = anomaly.run(cfg)"""),
 
-    md("## 3 · Compare with codebook and coreset\nMeans over categories and 3 seeds; `hybrid_w50` = 50% words, 50% real patches."),
+    md("## 3 · Compare with codebook and coreset\nMeans over categories and 3 seeds; `hybrid_w50` = 50% words, 50% real patches; `hybrid_w75` = 75% words, 25% real patches."),
     code("""import pandas as pd
 RES = "/content/drive/MyDrive/bovw-forensics/results"
 base = {"mvtec": "p0_anomaly_mvtec_v2.csv", "visa": "p0_anomaly_visa.csv"}

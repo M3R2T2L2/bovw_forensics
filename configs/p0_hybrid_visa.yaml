@@ -33,7 +33,7 @@ require_gpu: true
 methods:
   hybrid:
     sizes: [64, 256, 1024]
-    word_fractions: [0.5]        # add 0.75 for a words-heavy variant (~+60% runtime)
+    word_fractions: [0.5, 0.75]  # 0.5 already done is skipped on rerun
 
 vocab:
   seeds: [0, 1, 2]
