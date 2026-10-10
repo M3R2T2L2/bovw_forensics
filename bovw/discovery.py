@@ -37,7 +37,8 @@ from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from . import ad_data, cache
-from .anomaly import _LazyAD, _norm, cached_vocabulary, grid_side, nearest_word, topk_image_scores
+from .anomaly import (_LazyAD, _norm, cached_vocabulary, greedy_coreset, grid_side, min_dist, nearest_word,
+                      topk_image_scores)
 from .eval.clustering import cluster_accuracy
 from .sweep import RUNTIME_KEYS, _append, _env, _run_id, load_results
 from .vocab import build_vocabulary, l2n
@@ -65,6 +66,30 @@ def image_descriptors(desc: np.ndarray, n_images: int, dist: np.ndarray, resid: 
             mf[i] = d[i, sel].mean(0) if sel.any() else d[i, s[i].argmax()]
         out["mask_feat"] = l2n(mf)
     return out
+
+
+def topk_feature_descriptor(desc: np.ndarray, n_images: int, scores: np.ndarray, k: int) -> np.ndarray:
+    """Mean L2-normalised feature of each image's k highest-scoring patches (any patch scorer)."""
+    d = desc.reshape(n_images, -1, desc.shape[1])
+    s = scores.reshape(n_images, -1)
+    k = min(k, s.shape[1])
+    top = np.argpartition(-s, k - 1, axis=1)[:, :k]
+    return l2n(np.asarray(d[np.arange(n_images)[:, None], top], np.float32).mean(1))
+
+
+def estimate_k(x: np.ndarray, kmin: int = 2, kmax: int = 8, seed: int = 0) -> int:
+    """Number of clusters by best silhouette (k-means), so the true number of types is not given."""
+    from sklearn.metrics import silhouette_score
+
+    best, best_k = -2.0, kmin
+    for k in range(kmin, min(kmax, len(x) - 1) + 1):
+        lab = KMeans(n_clusters=k, n_init=10, random_state=seed).fit_predict(x)
+        if len(set(lab)) < 2:
+            continue
+        sc = silhouette_score(x, lab)
+        if sc > best:
+            best, best_k = sc, k
+    return best_k
 
 
 def cluster_scores(x: np.ndarray, y: list, n_clusters: int, algo: str, seeds=(0, 1, 2, 3, 4),
@@ -114,6 +139,8 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
     drop = set(cfg.get("drop_types", []))
     algos = cfg.get("algorithms", ["kmeans", "ward"])
     settings = cfg.get("settings", ["oracle", "detected"])
+    selectors = cfg.get("selectors", ["codebook"])
+    extra_desc = [f"topk_feat_{sl}" for sl in selectors if sl != "codebook"]
     mask_size = data_cfg.get("mask_size", 256)
     env = _env()
 
@@ -121,7 +148,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
         tag = f"{data_cfg.get('name', 'mvtec')}_{cat}_s{data_cfg.get('size', 448)}_m{mask_size}"
         ds = _LazyAD(data_cfg, cat, cache_dir, tag)
         want = [_run_id(cfg["name"], cat, k, s, st, dname, a) for k in ks for s in seeds for st in settings
-                for dname in DESCRIPTORS for a in algos]
+                for dname in list(DESCRIPTORS) + extra_desc for a in algos]
         if all(w in done for w in want):
             continue
 
@@ -142,6 +169,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
         tr_desc, te_desc = _norm(tr.desc, normalize), _norm(te.desc, normalize)
         types = np.array(meta.types)
         labels = np.asarray(meta.labels)
+        full_scores = min_dist(te_desc, tr_desc) if "fullbank" in selectors else None
 
         for k in ks:
             for seed in seeds:
@@ -153,13 +181,19 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 resid = vocab.transform(te_desc) - vocab.centers[word]
                 img_score = topk_image_scores(dist, te.n_images, topk)
                 desc_all = image_descriptors(te_desc, te.n_images, dist, resid, topk, meta.masks, side, te.global_)
+                if full_scores is not None:
+                    desc_all["topk_feat_fullbank"] = topk_feature_descriptor(te_desc, te.n_images, full_scores, topk)
+                if "coreset" in selectors:
+                    cs = min_dist(te_desc, tr_desc[np.sort(greedy_coreset(tr_desc, k, seed=seed))])
+                    desc_all["topk_feat_coreset"] = topk_feature_descriptor(te_desc, te.n_images, cs, topk)
 
                 anom = (labels == 1) & ~np.isin(types, list(drop))
                 n_types = len(set(types[anom]))
                 n_flag = int(anom.sum())
                 flagged = np.argsort(-img_score)[:n_flag]
                 sel_by = {"oracle": (np.where(anom)[0], n_types),
-                          "detected": (flagged, n_types + 1)}
+                          "detected": (flagged, n_types + 1),
+                          "oracle_estk": (np.where(anom)[0], None)}  # k chosen by silhouette per descriptor
                 for st in settings:
                     idx, n_cl = sel_by[st]
                     idx = idx[~np.isin(types[idx], list(drop))]
@@ -169,12 +203,13 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                             rid = _run_id(cfg["name"], cat, k, seed, st, dname, a)
                             if rid in done:
                                 continue
-                            sc = cluster_scores(x[idx], list(y), n_cl, a)
+                            ncl = n_cl if n_cl is not None else estimate_k(x[idx], seed=seed)
+                            sc = cluster_scores(x[idx], list(y), ncl, a)
                             if not sc:
                                 continue
                             row = {"run_id": rid, "config": cfg["name"], "category": cat, "extractor": ex_name,
                                    "k": k, "vocab_seed": seed, "setting": st, "descriptor": dname, "algorithm": a,
-                                   "n_images": int(len(idx)), "n_types": n_types, "n_clusters": n_cl,
+                                   "n_images": int(len(idx)), "n_types": n_types, "n_clusters": ncl,
                                    "n_good_in_set": int((y == "good").sum()), "topk": topk, **sc, **env}
                             _append(jsonl, row)
                             if progress:

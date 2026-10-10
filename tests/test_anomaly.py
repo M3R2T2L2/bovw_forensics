@@ -430,3 +430,44 @@ def test_prereg_checks_hybrid():
     rows = [dict(x, aupro=0.85) if x["method"] == "hybrid_w75" else x for x in rows]
     r = anomaly.prereg_checks_hybrid(pd.DataFrame(rows)).set_index("id")["pass"].to_dict()
     assert r["H3"] is False and r["H4"] is True
+
+
+def test_review_controls_run(tmp_path):
+    cfg = {"name": "rv", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                  "n_train": 20, "n_good": 10, "n_bad": 10},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"), "cache_vocab": True,
+           "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+           "region_metrics": True, "image_topk": [10],
+           "extra_metrics": {"methods": ["codebook_dist", "coreset_knn"], "k": [16], "sigmas": [0, 2],
+                             "aupro_fpr": [0.05, 0.1]},
+           "methods": {"codebook": {"k": [16], "scores": ["codebook_dist", "medoid_knn"]},
+                       "codebook_gpu": {"k": [16, 64]},
+                       "subsample": {"sizes": [16, 64], "methods": ["coreset_knn", "coreset_trim1", "coreset_trim5"]}},
+           "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}}
+    df = anomaly.run(cfg, progress=False)
+    assert set(df.method) == {"codebook_dist", "medoid_knn", "codebook_gpu", "coreset_knn",
+                              "coreset_trim1", "coreset_trim5"}
+    r = df[(df.method == "codebook_dist") & (df.k == 16)].iloc[0]
+    for c in ["aupro_f5", "aupro_f10", "pixel_auroc_s0", "aupro_s0", "pixel_auroc_s2", "aupro_s2"]:
+        assert np.isfinite(r[c]), c
+    assert np.isclose(r["aupro_f10"], r["aupro_f10"]) and r["aupro_f5"] <= 1
+    assert df[df.method == "medoid_knn"].bank_size.iloc[0] <= 16
+    assert df[["image_auroc", "aupro"]].notna().all().all()
+    assert len(anomaly.run(cfg, progress=False)) == len(df)
+
+
+def test_discovery_selectors_and_estimated_k(tmp_path):
+    from bovw import discovery
+
+    cfg = {"name": "d2", "data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                                  "n_train": 20, "n_good": 10, "n_bad": 20},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractor": {"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}},
+           "k": [16], "topk": 5, "selectors": ["codebook", "fullbank", "coreset"], "algorithms": ["kmeans"],
+           "settings": ["oracle", "oracle_estk"],
+           "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}}
+    df = discovery.run(cfg, progress=False)
+    assert {"topk_feat", "topk_feat_fullbank", "topk_feat_coreset"} <= set(df.descriptor)
+    est = df[df.setting == "oracle_estk"]
+    assert (est.n_clusters >= 2).all() and (est.n_clusters <= 8).all()
+    assert len(discovery.run(cfg, progress=False)) == len(df)

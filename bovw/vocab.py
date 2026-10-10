@@ -62,3 +62,56 @@ def build_vocabulary(desc: np.ndarray, k: int, *, max_descriptors: int = 200_000
     return Vocabulary(centers=centers, pca=pca, spherical=spherical,
                       info={"k": k, "n_fit": int(x.shape[0]), "empty_words": int((counts == 0).sum()),
                             "inertia": float(km.inertia_)})
+
+
+def build_vocabulary_torch(desc: np.ndarray, k: int, *, max_descriptors: int = 200_000, spherical: bool = True,
+                           seed: int = 0, iters: int = 50, chunk: int = 65536, **_ignored) -> Vocabulary:
+    """Lloyd k-means on the GPU (CPU torch fallback) for large K, where sklearn is too slow.
+
+    Same sample as build_vocabulary (sample_descriptors with this seed). Initialisation:
+    k distinct random samples (seeded); empty clusters are re-seeded with the samples
+    farthest from their centre. Spherical: L2-normalised points and centres
+    (cosine k-means). No PCA. A different algorithm from sklearn's MiniBatchKMeans
+    with k-means++ and 3 inits, so results are labelled separately (codebook_gpu).
+    """
+    import torch
+
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    x_np = sample_descriptors(desc, max_descriptors, seed)
+    if spherical:
+        x_np = l2n(x_np)
+    n = len(x_np)
+    k = min(k, n)
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    x = torch.from_numpy(np.ascontiguousarray(x_np, dtype=np.float32)).to(dev)
+    c = x[torch.randperm(n, generator=g)[:k].to(dev)].clone()
+    x_sq = (x * x).sum(1)
+    assign = torch.empty(n, dtype=torch.long, device=dev)
+    best = torch.empty(n, device=dev)
+    inertia = float("nan")
+    for _ in range(iters):
+        c_sq = (c * c).sum(1)
+        for i in range(0, n, chunk):
+            xi = x[i:i + chunk]
+            d = x_sq[i:i + chunk, None] - 2.0 * xi @ c.T + c_sq[None, :]
+            v, a = d.min(1)
+            best[i:i + chunk], assign[i:i + chunk] = v.clamp_min(0), a
+        counts = torch.bincount(assign, minlength=k)
+        sums = torch.zeros_like(c).index_add_(0, assign, x)
+        new = sums / counts.clamp_min(1)[:, None].float()
+        empty = (counts == 0).nonzero().flatten()
+        if len(empty):
+            far = best.topk(len(empty)).indices
+            new[empty] = x[far]
+        if spherical:
+            new = new / new.norm(dim=1, keepdim=True).clamp_min(1e-12)
+        shift = float((new - c).abs().max())
+        c = new
+        inertia = float(best.sum())
+        if shift < 1e-6:
+            break
+    counts = torch.bincount(assign, minlength=k)
+    centers = c.cpu().numpy().astype(np.float32)
+    return Vocabulary(centers=centers, pca=None, spherical=spherical,
+                      info={"k": k, "n_fit": n, "empty_words": int((counts == 0).sum()), "inertia": inertia,
+                            "backend": "torch", "device": dev})

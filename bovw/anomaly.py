@@ -46,12 +46,13 @@ from .encode import _sqdist, hard
 from .extract import LocalFeatures, get_extractor
 from .sweep import RUNTIME_KEYS, _append, _env, _run_id, load_results
 from .timing import budget
-from .vocab import build_vocabulary, l2n
+from .vocab import build_vocabulary, build_vocabulary_torch, l2n
 
 PATCH_METHODS = ("patch_knn", "codebook_dist", "codebook_norm")
 IMAGE_METHODS = ("global_knn", "hist_knn")
 CODEBOOK_METHODS = ("codebook_dist", "codebook_norm", "hist_knn")
-SUBSAMPLE_METHODS = ("coreset_knn", "random_knn")
+SUBSAMPLE_METHODS = ("coreset_knn", "random_knn", "coreset_trim1", "coreset_trim5")
+TRIM_FRACTION = {"coreset_trim1": 0.01, "coreset_trim5": 0.05}
 
 
 def hybrid_name(word_fraction: float) -> str:
@@ -76,6 +77,57 @@ def _to_cuda_f32(torch, x: np.ndarray, chunk: int = 262144):
     for i in range(0, len(x), chunk):
         out[i:i + chunk] = torch.from_numpy(np.ascontiguousarray(x[i:i + chunk], dtype=np.float32)).cuda()
     return out
+
+
+def nn_search(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk: int = 65536,
+              exclude_zero: bool = False):
+    """Exact nearest bank row for each query: (Euclidean distance, index). GPU when available.
+
+    exclude_zero: ignore bank rows at distance 0 (the query itself when it is in the bank).
+    """
+    torch = _torch_cuda()
+    nq = len(queries)
+    dist = np.empty(nq, np.float32)
+    idx = np.empty(nq, np.int64)
+    if torch is not None:
+        b_all = _to_cuda_f32(torch, bank)
+        b_sq = (b_all * b_all).sum(1)
+        for i in range(0, nq, q_chunk):
+            q = torch.from_numpy(np.ascontiguousarray(queries[i:i + q_chunk], dtype=np.float32)).cuda()
+            q_sq = (q * q).sum(1, keepdim=True)
+            best = torch.full((len(q),), float("inf"), device="cuda")
+            arg = torch.zeros(len(q), dtype=torch.long, device="cuda")
+            for j in range(0, len(b_all), b_chunk):
+                d = (q_sq - 2.0 * q @ b_all[j:j + b_chunk].T + b_sq[j:j + b_chunk][None, :]).clamp_min(0)
+                if exclude_zero:  # identical rows, up to float32 rounding
+                    tol = 1e-6 * (q_sq + b_sq[j:j + b_chunk][None, :])
+                    d = torch.where(d <= tol, torch.full_like(d, float("inf")), d)
+                v, a = d.min(1)
+                better = v < best
+                best = torch.where(better, v, best)
+                arg = torch.where(better, a + j, arg)
+            dist[i:i + q_chunk] = best.sqrt().cpu().numpy()
+            idx[i:i + q_chunk] = arg.cpu().numpy()
+        del b_all, b_sq
+        torch.cuda.empty_cache()
+        return dist, idx
+    bc = b_chunk // 4
+    b_sq = np.concatenate([(np.asarray(bank[j:j + bc], np.float32) ** 2).sum(1) for j in range(0, len(bank), bc)])
+    for i in range(0, nq, 1024):
+        q = np.asarray(queries[i:i + 1024], np.float32)
+        q_sq = (q * q).sum(1, keepdims=True)
+        best = np.full(len(q), np.inf, np.float32)
+        arg = np.zeros(len(q), np.int64)
+        for j in range(0, len(bank), bc):
+            d = np.maximum(q_sq - 2.0 * q @ np.asarray(bank[j:j + bc], np.float32).T + b_sq[None, j:j + bc], 0)
+            if exclude_zero:  # identical rows, up to float32 rounding
+                d[d <= 1e-6 * (q_sq + b_sq[None, j:j + bc])] = np.inf
+            a = d.argmin(1)
+            v = d[np.arange(len(a)), a]
+            better = v < best
+            best[better], arg[better] = v[better], a[better] + j
+        dist[i:i + 1024], idx[i:i + 1024] = np.sqrt(best), arg
+    return dist, idx
 
 
 def min_dist(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk: int = 65536) -> np.ndarray:
@@ -187,6 +239,23 @@ def greedy_coreset(x: np.ndarray, m: int, seed: int = 0, proj_dim: int = 128, ch
         sel.append(nxt)
         np.minimum(mind, ((z - z[nxt]) ** 2).sum(1), out=mind)
     return np.array(sel, np.int64)
+
+
+def outlier_scores(x: np.ndarray, n_ref: int = 50000, seed: int = 0) -> np.ndarray:
+    """Distance from each row to its nearest neighbour in a random reference sample of rows
+    (itself excluded): a cheap kNN outlier score for trimming before k-center."""
+    rng = np.random.default_rng(seed + 7919)
+    ref = np.sort(rng.choice(len(x), size=min(n_ref, len(x)), replace=False))
+    d, _ = nn_search(x, np.asarray(x[ref], np.float32), exclude_zero=True)
+    return d
+
+
+def trimmed_coreset(x: np.ndarray, m: int, trim: float, seed: int = 0) -> np.ndarray:
+    """Greedy k-center on the rows left after dropping the `trim` fraction with the largest outlier score."""
+    s = outlier_scores(x, seed=seed)
+    keep = np.sort(np.argsort(s)[:int(round(len(x) * (1 - trim)))])
+    sel = greedy_coreset(x[keep], m, seed=seed)
+    return keep[sel]
 
 
 # --------------------------------------------------------------------------- scoring helpers
@@ -368,7 +437,14 @@ def _norm(x: np.ndarray, normalize: bool) -> np.ndarray:
 
 
 def nearest_word(desc: np.ndarray, vocab, chunk: int = 65536):
-    """Transformed-space distance to, and index of, the nearest visual word."""
+    """Transformed-space distance to, and index of, the nearest visual word (GPU when available)."""
+    if _torch_cuda() is not None:
+        dist = np.empty(len(desc), np.float32)
+        idx = np.empty(len(desc), np.int64)
+        for i in range(0, len(desc), chunk * 4):
+            x = vocab.transform(np.asarray(desc[i:i + chunk * 4], np.float32))
+            dist[i:i + chunk * 4], idx[i:i + chunk * 4] = nn_search(x, vocab.centers)
+        return dist, idx
     dist = np.empty(len(desc), np.float32)
     idx = np.empty(len(desc), np.int64)
     for i in range(0, len(desc), chunk):
@@ -491,13 +567,19 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
 
     methods = cfg["methods"]
     ks = methods.get("codebook", {}).get("k", [])
-    cb_methods = [m for m in CODEBOOK_METHODS if m in methods.get("codebook", {}).get("scores", CODEBOOK_METHODS)]
+    cb_methods = [m for m in CODEBOOK_METHODS + ("medoid_knn",)
+                  if m in methods.get("codebook", {}).get("scores", CODEBOOK_METHODS)]
+    gpu_ks = sorted(methods.get("codebook_gpu", {}).get("k", []))
+    xm = cfg.get("extra_metrics", {})
+    xm_methods, xm_ks = set(xm.get("methods", [])), set(xm.get("k", []))
+    xm_sigmas, xm_fprs = [float(v) for v in xm.get("sigmas", [])], [float(v) for v in xm.get("aupro_fpr", [])]
     vocab_cfg = dict(cfg.get("vocab", {}))
     seeds = vocab_cfg.pop("seeds", None) or [vocab_cfg.get("seed", 0)]
     vocab_cfg.pop("seed", None)
     sub_cfg = methods.get("subsample", {})
     sub_sizes = sorted(sub_cfg.get("sizes", ks)) if sub_cfg else []
-    sub_methods = [m for m in SUBSAMPLE_METHODS if m in sub_cfg.get("methods", SUBSAMPLE_METHODS)] if sub_cfg else []
+    sub_methods = ([m for m in SUBSAMPLE_METHODS if m in sub_cfg.get("methods", ("coreset_knn", "random_knn"))]
+                   if sub_cfg else [])
     hyb_cfg = methods.get("hybrid", {})
     hyb_sizes = sorted(hyb_cfg.get("sizes", [])) if hyb_cfg else []
     hyb_fracs = [float(f) for f in hyb_cfg.get("word_fractions", [0.5])] if hyb_cfg else []
@@ -529,7 +611,8 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                         + [_run_id(cfg["name"], cat, ex_name, m, k, s)
                            for m in sub_methods for k in sub_sizes for s in seeds]
                         + [_run_id(cfg["name"], cat, ex_name, hybrid_name(f), k, s)
-                           for f in hyb_fracs for k in hyb_sizes for s in seeds])
+                           for f in hyb_fracs for k in hyb_sizes for s in seeds]
+                        + [_run_id(cfg["name"], cat, ex_name, "codebook_gpu", k, s) for k in gpu_ks for s in seeds])
             if all(r in done for r in todo_ids):
                 continue
 
@@ -561,6 +644,19 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 row = {"run_id": rid, **base, "method": method, "k": k, "vocab_seed": seed, **(timing or {}),
                        **(extra or {}),
                        **metrics(meta.labels, image_scores, meta.types, meta.masks, maps, region_metrics=region)}
+                if maps is not None and method in xm_methods and k in xm_ks:
+                    for f in xm_fprs:
+                        row[f"aupro_f{int(round(f * 100))}"] = (
+                            binned_pixel_metrics(meta.masks, maps, True, fpr_limit=f)["aupro"]
+                            if maps.size > LARGE_PIXELS else aupro(meta.masks, maps, fpr_limit=f))
+                    for sg in xm_sigmas:
+                        m2, _ = patch_maps(patch_scores, te.n_images, side, mask_size, sg, map_dtype)
+                        r2 = (binned_pixel_metrics(meta.masks, m2, True) if m2.size > LARGE_PIXELS else
+                              {"pixel_auroc": _auroc(meta.masks.reshape(-1), m2.reshape(-1)),
+                               "aupro": aupro(meta.masks, m2)})
+                        tag_s = f"s{sg:g}"
+                        row[f"pixel_auroc_{tag_s}"], row[f"aupro_{tag_s}"] = r2["pixel_auroc"], r2["aupro"]
+                        del m2
                 if patch_scores is not None:
                     for tk in topks:
                         row[f"image_auroc_top{tk}"] = _auroc(meta.labels, topk_image_scores(
@@ -611,6 +707,12 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 if "random_knn" in sub_methods:
                     order = np.random.default_rng(seed).permutation(len(tr_desc))[:max(sub_sizes)]
                     picks["random_knn"] = (order, {})
+                for tm in ("coreset_trim1", "coreset_trim5"):
+                    if tm in sub_methods:
+                        ct = {}
+                        with budget(ct, "vocab"):
+                            order = trimmed_coreset(tr_desc, max(sub_sizes), TRIM_FRACTION[tm], seed=seed)
+                        picks[tm] = (order, ct)
                 for m, (order, sel_t) in picks.items():
                     for k in sub_sizes:  # nested: the first k picks are the size-k subset
                         rid = ids[(m, k)]
@@ -648,11 +750,39 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                                 ns = d_te / radius[w_te]
                                 maps, img = patch_maps(ns, te.n_images, side, mask_size, sigma, map_dtype)
                             record(ids["codebook_norm"], "codebook_norm", k, seed, img, maps, extra, t2, ns)
+                    if ids.get("medoid_knn") and ids["medoid_knn"] not in done:
+                        t = dict(vt)
+                        with budget(t, "select"):
+                            _, mi = nn_search(vocab.centers, tr_n.desc)  # real patch nearest each word
+                            med = np.unique(mi)
+                        with budget(t, "score"):
+                            ps = min_dist(te_n.desc, tr_n.desc[med])
+                            maps, img = patch_maps(ps, te.n_images, side, mask_size, sigma, map_dtype)
+                        record(ids["medoid_knn"], "medoid_knn", k, seed, img, maps,
+                               {**extra, "bank_size": int(len(med))}, t, ps)
                     if ids.get("hist_knn") and ids["hist_knn"] not in done:
                         t = dict(vt)
                         with budget(t, "score"):
                             img = min_dist(hard(te_n, vocab), hard(tr_n, vocab))
                         record(ids["hist_knn"], "hist_knn", k, seed, img, None, extra, t)
+                    del vocab
+
+            # codebook_gpu: Lloyd k-means on the GPU (for large K); same scoring as codebook_dist
+            for k in gpu_ks:
+                for seed in seeds:
+                    rid = _run_id(cfg["name"], cat, ex_name, "codebook_gpu", k, seed)
+                    if rid in done:
+                        continue
+                    vkey = {"tag": tag, "extractor": ex_name, "params": cache_params, "normalize": normalize,
+                            "k": k, "seed": seed, "vocab": vocab_cfg, "backend": "torch"}
+                    vocab, vt = cached_vocabulary(cache_dir if cache_vocab else None, vkey,
+                                                  lambda: build_vocabulary_torch(tr_desc, k, seed=seed, **vocab_cfg))
+                    t = dict(vt)
+                    with budget(t, "score"):
+                        d_te, _ = nearest_word(te_desc, vocab)
+                        maps, img = patch_maps(d_te, te.n_images, side, mask_size, sigma, map_dtype)
+                    record(rid, "codebook_gpu", k, seed, img, maps,
+                           {"empty_words": vocab.info["empty_words"], "bank_size": k}, t, d_te)
                     del vocab
 
             # hybrid: K = f*M visual words + (1-f)*M real patches the words cover worst, one memory

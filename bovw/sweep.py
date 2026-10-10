@@ -27,7 +27,7 @@ from .encode import encode
 from .eval import evaluate_clustering
 from .extract import get_extractor
 from .timing import budget
-from .vocab import build_vocabulary
+from .vocab import build_vocabulary, l2n
 
 
 def load_config(path) -> dict:
@@ -160,6 +160,28 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 _append(jsonl, row)
                 if progress:
                     print(f"[{ex_name:>12}] global                      NMI={row['nmi']:.3f}")
+
+        for bl in cfg.get("extra_baselines", []):  # image-level baselines built from the patch tokens
+            rid = _run_id(cfg["name"], ex_name, bl, 0)
+            if rid in done:
+                continue
+            per = feats.counts()
+            if per.min() != per.max():
+                raise ValueError(f"{bl} needs the same number of patches per image")
+            mean = np.asarray(feats.desc, np.float32).reshape(feats.n_images, int(per[0]), -1).mean(1)
+            if bl == "meanpool":
+                x = mean
+            elif bl == "cls_meanpool" and feats.global_ is not None:
+                x = np.concatenate([l2n(feats.global_), l2n(mean)], 1)
+            else:
+                continue
+            row = {"run_id": rid, **base, "assignment": bl, "variant": "", "k": 0, "vocab_seed": -1,
+                   "enc_dim": x.shape[1]}
+            with budget(row, "eval"):
+                row.update(evaluate_clustering(x, labels, **eval_cfg))
+            _append(jsonl, row)
+            if progress:
+                print(f"[{ex_name:>12}] {bl:<27} NMI={row['nmi']:.3f}")
 
         for k in ks:
             for seed in seeds:

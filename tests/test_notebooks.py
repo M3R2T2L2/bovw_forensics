@@ -69,3 +69,10 @@ def test_notebook_08_hybrid_3cad():
     assert "p0_hybrid_3cad.yaml" in src and "anomaly.prereg_checks_hybrid" in src
     assert "THREECAD_GDRIVE_ID" in src and "torch.cuda.is_available" in src
     assert "df = run(cfg)" not in src
+
+
+def test_notebook_09_review():
+    src = _code("09_p0_review_controls.ipynb")
+    for k in ["p0_review_{ds}.yaml", "image_level_table", "review.benchmark", "p0_review_discovery_mvtec.yaml",
+              "p0_review_stl10.yaml", "stl10_stability"]:
+        assert k in src, k

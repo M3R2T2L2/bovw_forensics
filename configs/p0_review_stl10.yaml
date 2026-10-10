@@ -1,0 +1,38 @@
+# Referee-report controls for STL-10 clustering (exploratory): 10 clustering seeds for every
+# encoding, n_init = 20, per-run accuracies kept, and two extra baselines built from the patch
+# tokens (mean-pooled patches; CLS + mean-pooled patches). Reuses the cached DINOv2-S features
+# of p0_stl10_full (same dataset block and extractor params).
+
+name: p0_review_stl10
+
+dataset:
+  name: stl10
+  split: test
+  n_per_class: null
+  root: /content/data
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractors:
+  - name: dinov2_s
+    params: {image_size: 224, batch_size: 64}
+    vocab: {pca_dim: 64, spherical: true}
+
+vocab:
+  k: [64, 1024]
+  seeds: [0, 1, 2]
+  max_descriptors: 200000
+
+assignments: [hard, vlad]
+vlad_max_k: 64
+
+global_baseline: true
+extra_baselines: [meanpool, cls_meanpool]
+
+eval:
+  clustering:
+    pca_dim: 128
+    seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    n_init: 20
+    return_runs: true

@@ -566,6 +566,85 @@ t.round(3)"""),
 ]
 
 
+cells_09 = [
+    md("""# P0 · Referee-report controls (exploratory)
+
+Controls requested in the review, run on the **cached** MVTec AD, VisA and STL-10 features (no dataset download):
+
+| Control | Question |
+|---|---|
+| k-means medoids | is the codebook's edge from **averaging** or from **where** its vectors sit? |
+| k-center after trimming 1% / 5% outliers | is the coreset hurt by isolated patches? |
+| M = 4,096 and 16,384 | do the methods converge at larger memory? (GPU k-means, calibrated at 1,024) |
+| σ ∈ {0, 2, 4, 8}, AUPRO at 5% / 10% / 30% FPR | is the localization gap an artefact of smoothing or of the FPR limit? |
+| image-level bootstrap | CIs that include test-image sampling, not only categories |
+| same-hardware timing | what do codebook and coreset really cost on one GPU? |
+| defect discovery, three patch selectors, estimated k | does the codebook matter for discovery, without being told the number of types? |
+| STL-10: 10 seeds, n_init = 20, mean-pooled and CLS+mean baselines | is the codebook's stability real? |
+
+**Runtime (T4):** about 2–3 h. Every finished run is saved; Run all again after a disconnect to resume."""),
+    *setup_cells(),
+
+    md("## 2 · Anomaly controls (MVTec AD, then VisA)"),
+    code("""import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+import pandas as pd
+from bovw.sweep import load_config
+from bovw import anomaly, discovery, review
+from bovw.sweep import run as sweep_run
+
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+CACHE = "/content/drive/MyDrive/bovw-forensics/cache"
+ctrl = {}
+for ds in ["mvtec", "visa"]:
+    ctrl[ds] = anomaly.run(load_config(f"configs/p0_review_{ds}.yaml"))"""),
+    code("""tabs = pd.concat({ds: review.control_table(df) for ds, df in ctrl.items()}, names=["dataset"])
+tabs.to_csv(f"{RES}/p0_review_controls_summary.csv")
+tabs.round(3)"""),
+
+    md("## 3 · Image-level bootstrap (MVTec AD, VisA)\nTwo-level bootstrap: categories, then test images within each. Max-patch image AUROC (the per-image scores saved by every run)."),
+    code("""from bovw import ad_data
+specs = []
+for ds, cfgname, hyb in [("mvtec", "p0_anomaly_mvtec_v2", "p0_hybrid_mvtec"), ("visa", "p0_anomaly_visa", "p0_hybrid_visa")]:
+    cats = ad_data.categories(ds)
+    for k in [64, 256, 1024]:
+        specs.append({"label": f"{ds}: codebook - coreset", "cfg_name": cfgname, "dataset": ds, "categories": cats,
+                      "a": ("codebook_dist", k), "b": ("coreset_knn", k)})
+    for k in [256, 1024]:
+        specs.append({"label": f"{ds}: hybrid75 - codebook", "cfg_name": hyb, "cfg_name_b": cfgname, "dataset": ds,
+                      "categories": cats, "a": ("hybrid_w75", k), "b": ("codebook_dist", k)})
+img = review.image_level_table(specs, results_dir=RES, cache_dir=CACHE, n_boot=2000)
+img.to_csv(f"{RES}/p0_review_image_bootstrap.csv", index=False)
+img.round(4)"""),
+
+    md("## 4 · Same-hardware timing (one GPU, three categories)"),
+    code("""from bovw import cache as fcache
+from bovw.anomaly import _norm
+rows = []
+for ds, cat in [("mvtec", "bottle"), ("visa", "pcb1"), ("visa", "macaroni1")]:
+    tag = f"{ds}_{cat}_s448_m256"
+    tr, _ = fcache.get_or_compute(CACHE, f"{tag}_train", "dinov2_s", {"image_size": 448}, lambda: None)
+    te, _ = fcache.get_or_compute(CACHE, f"{tag}_test", "dinov2_s", {"image_size": 448}, lambda: None)
+    rows.append({"dataset": ds, "category": cat, **review.benchmark(_norm(tr.desc, True), _norm(te.desc, True), k=1024)})
+timing = pd.DataFrame(rows)
+timing.to_csv(f"{RES}/p0_review_timing.csv", index=False)
+timing.round(2)"""),
+
+    md("## 5 · Defect-type discovery with three patch selectors (MVTec AD)"),
+    code("""disc = discovery.run(load_config("configs/p0_review_discovery_mvtec.yaml"))
+ds_ = disc.groupby(["setting", "descriptor"])[["nmi", "nmi_chance", "nmi_above_chance", "ari", "acc", "n_clusters"]].mean()
+ds_.to_csv(f"{RES}/p0_review_discovery_summary.csv")
+ds_.round(3)"""),
+
+    md("## 6 · STL-10 clustering stability"),
+    code("""stl = sweep_run(load_config("configs/p0_review_stl10.yaml"))
+st = review.stl10_stability(stl)
+st.to_csv(f"{RES}/p0_review_stl10_summary.csv", index=False)
+st.round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -586,3 +665,4 @@ write(cells_05, "05_p0_defect_discovery.ipynb")
 write(cells_06, "06_p0_anomaly_3cad.ipynb")
 write(cells_07, "07_p0_hybrid.ipynb")
 write(cells_08, "08_p0_hybrid_3cad.ipynb")
+write(cells_09, "09_p0_review_controls.ipynb")

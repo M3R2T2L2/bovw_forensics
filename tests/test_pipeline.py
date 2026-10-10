@@ -218,3 +218,19 @@ def test_grid_seeds_overrides_and_selection(tmp_path, monkeypatch):
     import json
     metas = [json.loads((d / "meta.json").read_text()) for d in (tmp_path / "c").iterdir() if d.is_dir()]
     assert all("n_jobs" not in m["params"] for m in metas)
+
+
+def test_sweep_extra_baselines_and_runs(tmp_path):
+    from bovw.sweep import run
+
+    cfg = {"name": "sb", "dataset": {"name": "synthetic", "n_per_class": 10, "n_classes": 3},
+           "cache_dir": str(tmp_path / "c"), "results_dir": str(tmp_path / "r"),
+           "extractors": [{"name": "dense_sift", "params": {"resize": 96, "step": 8, "size": 16, "n_jobs": 2}}],
+           "vocab": {"k": [8], "seeds": [0], "max_descriptors": 20000}, "assignments": ["hard"],
+           "extra_baselines": ["meanpool", "cls_meanpool"],
+           "eval": {"clustering": {"pca_dim": 16, "seeds": [0, 1, 2], "n_init": 3, "return_runs": True}}}
+    df = run(cfg, progress=False)
+    assert "meanpool" in set(df.assignment)           # cls_meanpool skipped: SIFT has no global embedding
+    import json
+    assert len(json.loads(df[df.assignment == "meanpool"].acc_runs.iloc[0])) == 3
+    assert (df.n_init == 3).all()

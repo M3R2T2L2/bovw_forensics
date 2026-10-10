@@ -35,6 +35,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 - `notebooks/06_p0_anomaly_3cad.ipynb`: preregistered replication on 3CAD, a dataset neither DINOv2 nor PatchCore was developed on; see `docs/preregistration_3cad.md`
 - `notebooks/07_p0_hybrid.ipynb`: hybrid memory (visual words + residual-coreset patches) on MVTec AD and VisA, exploratory
 - `notebooks/08_p0_hybrid_3cad.ipynb`: preregistered test of the 75/25 hybrid on 3CAD; see `docs/preregistration_hybrid_3cad.md`
+- `notebooks/09_p0_review_controls.ipynb`: controls requested by the referee (medoids, trimmed coreset, larger M, smoothing/FPR sensitivity, image-level bootstrap, same-hardware timing, discovery selectors, STL-10 stability)
 - `notebooks/05_p0_defect_discovery.ipynb`: unsupervised defect-type discovery on MVTec AD (clusters anomalous images by kind of defect)
 
 Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`
