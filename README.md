@@ -66,3 +66,17 @@ python -m bovw.sweep configs/smoke_synthetic.yaml
 ## License
 
 MIT
+
+## Published results and statistics
+
+`results_published/` holds the per-run CSVs behind every table in the write-up, plus
+`stats_paired_category_bootstrap.csv` (paired per-category differences with bootstrap CIs over
+categories; rebuild with `python scripts/paired_stats.py`).
+
+## AI-assistance disclosure
+
+The code, configs, notebooks and preregistration documents in this repository were written
+with Claude (Anthropic), working under the direction of the author, who designed the research
+questions, ran every experiment and reviewed the results. Commits made by Claude carry a
+`Co-Authored-By: Claude` trailer. Preregistration timestamps are git commit dates, which are
+author-set; future preregistrations will also be registered on OSF.
