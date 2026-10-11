@@ -65,7 +65,8 @@ def build_vocabulary(desc: np.ndarray, k: int, *, max_descriptors: int = 200_000
 
 
 def build_vocabulary_torch(desc: np.ndarray, k: int, *, max_descriptors: int = 200_000, spherical: bool = True,
-                           seed: int = 0, iters: int = 50, chunk: int = 65536, **_ignored) -> Vocabulary:
+                           seed: int = 0, iters: int = 50, chunk: int | None = None,
+                           max_block: int = 50_000_000, **_ignored) -> Vocabulary:
     """Lloyd k-means on the GPU (CPU torch fallback) for large K, where sklearn is too slow.
 
     Same sample as build_vocabulary (sample_descriptors with this seed). Initialisation:
@@ -85,6 +86,8 @@ def build_vocabulary_torch(desc: np.ndarray, k: int, *, max_descriptors: int = 2
     g = torch.Generator(device="cpu").manual_seed(seed)
     x = torch.from_numpy(np.ascontiguousarray(x_np, dtype=np.float32)).to(dev)
     c = x[torch.randperm(n, generator=g)[:k].to(dev)].clone()
+    if chunk is None:  # rows per distance block: block = chunk x k floats, at most max_block (200 MB)
+        chunk = max(256, min(65536, max_block // max(k, 1)))
     x_sq = (x * x).sum(1)
     assign = torch.empty(n, dtype=torch.long, device=dev)
     best = torch.empty(n, device=dev)
@@ -93,8 +96,9 @@ def build_vocabulary_torch(desc: np.ndarray, k: int, *, max_descriptors: int = 2
         c_sq = (c * c).sum(1)
         for i in range(0, n, chunk):
             xi = x[i:i + chunk]
-            d = x_sq[i:i + chunk, None] - 2.0 * xi @ c.T + c_sq[None, :]
+            d = torch.addmm(c_sq[None, :], xi, c.T, alpha=-2.0).add_(x_sq[i:i + chunk, None])
             v, a = d.min(1)
+            del d
             best[i:i + chunk], assign[i:i + chunk] = v.clamp_min(0), a
         counts = torch.bincount(assign, minlength=k)
         sums = torch.zeros_like(c).index_add_(0, assign, x)
@@ -112,6 +116,9 @@ def build_vocabulary_torch(desc: np.ndarray, k: int, *, max_descriptors: int = 2
             break
     counts = torch.bincount(assign, minlength=k)
     centers = c.cpu().numpy().astype(np.float32)
+    del x, c, x_sq, assign, best
+    if dev == "cuda":
+        torch.cuda.empty_cache()
     return Vocabulary(centers=centers, pca=None, spherical=spherical,
                       info={"k": k, "n_fit": n, "empty_words": int((counts == 0).sum()), "inertia": inertia,
                             "backend": "torch", "device": dev})

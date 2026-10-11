@@ -79,7 +79,7 @@ def _to_cuda_f32(torch, x: np.ndarray, chunk: int = 262144):
     return out
 
 
-def nn_search(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk: int = 65536,
+def nn_search(queries: np.ndarray, bank: np.ndarray, q_chunk: int = 4096, b_chunk: int = 32768,
               exclude_zero: bool = False):
     """Exact nearest bank row for each query: (Euclidean distance, index). GPU when available.
 

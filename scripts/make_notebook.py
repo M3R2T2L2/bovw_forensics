@@ -586,7 +586,9 @@ Controls requested in the review, run on the **cached** MVTec AD, VisA and STL-1
     *setup_cells(),
 
     md("## 2 · Anomaly controls (MVTec AD, then VisA)"),
-    code("""import torch
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # before CUDA starts
+import torch
 if not torch.cuda.is_available():
     raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
 import pandas as pd
