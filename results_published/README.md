@@ -16,5 +16,10 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_hybrid_3cad.csv | hybrid on 3CAD, preregistered (with rerun codebook/coreset) | 08 |
 | p0_defect_discovery_mvtec.csv | defect-type discovery, exploratory | 05 |
 | stats_paired_category_bootstrap.csv | paired per-category differences, bootstrap CIs over categories (`bovw/stats.py`) | — |
+| p0_review_controls_summary.csv | review controls, MVTec + VisA: medoids, trimmed coreset, GPU k-means to M = 16,384, sigma/FPR sensitivity (means over categories and seeds) | 09 |
+| p0_review_image_bootstrap.csv | two-level (category, then image) bootstrap of image-AUROC differences (`bovw/review.py`) | 09 |
+| p0_review_timing.csv | same-hardware timings, T4, K = 1,024 | 09 |
+
+The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`) are on Drive and still to be copied here.
 
 Per-image scores and saved maps are on Drive (`results/scores`, `results/maps`), not here.
