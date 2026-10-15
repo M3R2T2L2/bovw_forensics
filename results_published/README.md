@@ -19,7 +19,9 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_review_controls_summary.csv | review controls, MVTec + VisA: medoids, trimmed coreset, GPU k-means to M = 16,384, sigma/FPR sensitivity (means over categories and seeds) | 09 |
 | p0_review_image_bootstrap.csv | two-level (category, then image) bootstrap of image-AUROC differences (`bovw/review.py`) | 09 |
 | p0_review_timing.csv | same-hardware timings, T4, K = 1,024 | 09 |
+| p0_review_discovery_summary.csv | defect discovery with top-10 patches chosen by codebook, full bank and coreset; true vs. estimated k | 09 |
+| p0_review_stl10_summary.csv | STL-10 stability rerun (n_init 20, 10 clustering seeds) with mean-pool and CLS+mean-pool baselines | 09 |
 
-The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`) are on Drive and still to be copied here.
+The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`) are on Drive and still to be copied here.
 
 Per-image scores and saved maps are on Drive (`results/scores`, `results/maps`), not here.
