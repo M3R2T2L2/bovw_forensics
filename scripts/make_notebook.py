@@ -647,6 +647,255 @@ st.round(3)"""),
 ]
 
 
+cells_10 = [
+    md("""# P0 · Review follow-ups: paired intervals, defect vocabulary, 3CAD bootstrap (exploratory)
+
+| Section | Question |
+|---|---|
+| Paired intervals for the controls | are the medoid, trimming, large-M and σ/FPR differences larger than category-to-category noise? |
+| Defect vocabulary | do words mean consistent things (position, appearance), and do defects of one type trigger the same words? Codebook vs. the same-size coreset used as a vocabulary |
+| Example figures | for each defect type: the defect, and normal examples of its signature word |
+| 3CAD image-level bootstrap | the two-level bootstrap from notebook 09, on 3CAD |
+
+Reuses cached MVTec features and vocabularies. The figures need the MVTec images and the 3CAD bootstrap needs
+the 3CAD archive (both already on Drive). **Runtime (T4):** about 1–1.5 h. Finished runs are saved;
+Run all again after a disconnect to resume."""),
+    *setup_cells(),
+    *_data_cells(),
+
+    md("## 3 · Paired category-level intervals for the controls (MVTec AD, VisA)"),
+    code("""import pandas as pd
+from bovw import stats
+
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+CACHE = "/content/drive/MyDrive/bovw-forensics/cache"
+ctrl = {ds: pd.read_csv(f"{RES}/p0_review_{ds}.csv") for ds in ["mvtec", "visa"]}
+main = ["image_auroc", "image_auroc_top10", "pixel_auroc", "aupro"]
+extra = ["aupro_f5", "aupro_f10", "pixel_auroc_s0", "aupro_s0", "pixel_auroc_s8", "aupro_s8"]
+pairs = [("medoid_knn", "codebook_dist", (64, 256, 1024), main + extra),
+         ("medoid_knn", "coreset_knn", (64, 256, 1024), main + extra),
+         ("coreset_trim1", "coreset_knn", (64, 256, 1024, 4096, 16384), main),
+         ("coreset_trim5", "coreset_knn", (64, 256, 1024, 4096, 16384), main),
+         ("codebook_gpu", "coreset_knn", (1024, 4096, 16384), main),
+         ("codebook_gpu", "codebook_dist", (1024,), main),
+         ("codebook_dist", "coreset_knn", (64, 1024), extra)]
+paired = pd.concat([stats.compare(ctrl, a, b, ks=ks, metrics=m) for a, b, ks, m in pairs], ignore_index=True)
+paired.to_csv(f"{RES}/p0_review_controls_paired.csv", index=False)
+show = paired[paired.dataset == "pooled"].drop(columns=["p_sign", "p_wilcoxon"])
+show.round(3).to_string(max_rows=200)"""),
+
+    md("## 4 · Is the vocabulary a usable defect language? (MVTec AD)"),
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+from bovw.sweep import load_config
+from bovw import lexicon
+
+lcfg = load_config("configs/p0_lexicon_mvtec.yaml")
+lcfg["data"]["root"] = LOCAL_ROOT
+lex = lexicon.run(lcfg)
+lsum = lexicon.summary(lex)
+lsum.to_csv(f"{RES}/p0_lexicon_mvtec_summary.csv")
+lsum.round(3)"""),
+    code("""# Paired codebook - coreset differences over categories (seeds averaged), with bootstrap CIs
+lx = lex.rename(columns={"memory": "method"})
+lpaired = stats.compare({"mvtec": lx}, "codebook", "coreset", ks=(64, 256, 1024),
+                        metrics=["position_nmi_gain", "cohesion", "knn1", "knn5", "sig_cover", "sig_false"])
+lpaired.to_csv(f"{RES}/p0_lexicon_mvtec_paired.csv", index=False)
+lpaired.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+
+    md("## 5 · Example figures: each defect type and its signature word (K = 256, seed 0)"),
+    code("""import matplotlib.pyplot as plt
+import numpy as np
+from bovw import ad_data, cache as fcache
+from bovw.anomaly import _norm, cached_vocabulary, grid_side
+from bovw.vocab import build_vocabulary
+
+K, SEED = 256, 0
+vcfg = {"max_descriptors": 200000, "spherical": True}
+for cat in ["cable", "screw", "metal_nut", "hazelnut"]:
+    tag = f"mvtec_{cat}_s448_m256"
+    tr, _ = fcache.get_or_compute(CACHE, f"{tag}_train", "dinov2_s", {"image_size": 448}, lambda: None)
+    te, _ = fcache.get_or_compute(CACHE, f"{tag}_test", "dinov2_s", {"image_size": 448}, lambda: None)
+    trd, ted = _norm(tr.desc, True), _norm(te.desc, True)
+    vkey = {"tag": tag, "extractor": "dinov2_s", "params": {"image_size": 448}, "normalize": True,
+            "k": K, "seed": SEED, "vocab": vcfg}
+    vocab, _ = cached_vocabulary(CACHE, vkey, lambda: build_vocabulary(trd, K, seed=SEED, **vcfg))
+    tr_w, te_w, te_d = lexicon.memory_words("codebook", trd, ted, K, SEED, vocab)
+    split = ad_data.load_mvtec(LOCAL_ROOT, cat, 448, 256)
+    types = np.array(split.test_types)
+    anom = (np.asarray(split.test_labels) == 1) & (types != "combined")
+    fig = lexicon.defect_vocabulary_figure(split.train_images, split.test_images, tr_w, te_w, te_d, types, anom,
+                                           grid_side(te), K, title=f"MVTec {cat}: defect type -> signature word (K = {K})")
+    fig.savefig(f"{RES}/p0_lexicon_{cat}_K{K}.png", dpi=130, bbox_inches="tight")
+    plt.show()"""),
+
+    md("## 6 · Image-level bootstrap on 3CAD"),
+    *_cells_06_data()[1:],   # the 3CAD download/extract cell (its "## 2 · Data" heading dropped)
+    code("""from pathlib import Path
+from bovw import review
+from bovw.anomaly import _LazyAD
+
+META = Path("/content/cache_3cad")          # labels are rebuilt from the archive (3CAD features were never on Drive)
+cats = ad_data.categories("3cad")
+for cat in cats:
+    _LazyAD({"name": "3cad", "root": ROOT, "size": 448, "mask_size": 256}, cat, META, f"3cad_{cat}_s448_m256").get_meta()
+specs = [{"label": "3cad: codebook - coreset", "cfg_name": "p0_anomaly_3cad", "dataset": "3cad", "categories": cats,
+          "a": ("codebook_dist", k), "b": ("coreset_knn", k)} for k in [64, 256, 1024]]
+specs += [{"label": "3cad: hybrid75 - codebook", "cfg_name": "p0_hybrid_3cad", "dataset": "3cad", "categories": cats,
+           "a": ("hybrid_w75", k), "b": ("codebook_dist", k)} for k in [256, 1024]]
+img3 = review.image_level_table(specs, results_dir=RES, cache_dir=META, n_boot=2000)
+img3.to_csv(f"{RES}/p0_review_image_bootstrap_3cad.csv", index=False)
+img3.round(4)"""),
+
+    md("## 7 · Record the environment (pinned package versions for the archive)"),
+    code("""import platform, subprocess, torch
+lock = subprocess.run(["pip", "freeze"], capture_output=True, text=True).stdout
+head = (f"# Colab environment, {pd.Timestamp.now():%Y-%m-%d}; Python {platform.python_version()}; "
+        f"torch {torch.__version__}; CUDA {torch.version.cuda}; GPU {torch.cuda.get_device_name(0)}\n")
+open(f"{RES}/requirements-colab.lock", "w").write(head + lock)
+print(head, len(lock.splitlines()), "packages written to requirements-colab.lock on Drive")"""),
+]
+
+
+_DATA_ANY = """import os, glob, shutil, subprocess
+from bovw import ad_data
+
+def get_mvtec():
+    tar, local = "/content/drive/MyDrive/bovw-forensics/data/mvtec_anomaly_detection.tar.xz", "/content/mvtec"
+    if not os.path.isfile(tar):
+        raise SystemExit("Put mvtec_anomaly_detection.tar.xz in MyDrive/bovw-forensics/data/ (see notebook 02).")
+    if not os.path.isdir(f"{local}/bottle"):
+        os.makedirs(local, exist_ok=True)
+        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
+    return local
+
+def get_visa():
+    tar, local = "/content/drive/MyDrive/bovw-forensics/data/VisA_20220922.tar", "/content/visa"
+    if not os.path.isfile(tar) or os.path.getsize(tar) < 1e9:
+        ad_data.ensure_archive(tar, url=ad_data.VISA_URL, sha256=None)
+    if not os.path.isdir(local):
+        os.makedirs(local)
+        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
+    return ad_data.find_visa_root(local)
+
+def get_3cad():
+    local, archive = "/content/3cad", "/content/3cad_archive"
+    if not os.path.isdir(local):
+        copy = glob.glob("/content/drive/MyDrive/bovw-forensics/data/3CAD*")
+        if not copy:
+            raise SystemExit("Put the 3CAD archive in MyDrive/bovw-forensics/data/ (see notebook 06).")
+        shutil.copy(copy[0], archive)
+        os.makedirs(local)
+        magic = open(archive, "rb").read(4)
+        fmt = "zip" if magic[:2] == b"PK" else ("gztar" if magic[:2] == b"\\x1f\\x8b" else "tar")
+        shutil.unpack_archive(archive, local, fmt)
+        os.remove(archive)
+    return ad_data.find_root(local, "Copper_Stator")
+"""
+
+cells_11 = [
+    md("""# P0 · Second backbone: DINOv2-B (exploratory)
+
+The referee asked whether the codebook-vs-coreset result depends on DINOv2-S. This reruns the main comparison
+with **DINOv2-B** (768-d patch tokens), same protocol: 448 px, M = K ∈ {64, 256, 1,024}, 3 seeds, codebook vs.
+greedy coreset (plus the full bank on MVTec AD and VisA).
+
+**One dataset per Colab session:** set `DATASET` below to `"mvtec"`, then `"visa"`, then `"3cad"`.
+**Runtime (T4):** MVTec about 2–3 h, VisA about 4–5 h, 3CAD about 5–6 h. Finished runs are saved to Drive;
+after a disconnect, Run all again."""),
+    *setup_cells(),
+
+    md("## 2 · Data"),
+    code("""DATASET = "mvtec"     # "mvtec", then "visa", then "3cad" (one per session)
+
+import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+""" + _DATA_ANY + """
+ROOT = {"mvtec": get_mvtec, "visa": get_visa, "3cad": get_3cad}[DATASET]()
+print(DATASET, ROOT)"""),
+
+    md("## 3 · Run"),
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from bovw.sweep import load_config
+from bovw import anomaly, stats
+
+cfg = load_config(f"configs/p0_dinov2b_{DATASET}.yaml")
+cfg["data"]["root"] = ROOT
+df = anomaly.run(cfg)"""),
+
+    md("## 4 · Codebook vs. coreset with DINOv2-B (paired over categories)"),
+    code("""RES = cfg["results_dir"]
+pb = stats.compare({DATASET: df}, "codebook_dist", "coreset_knn", ks=(64, 256, 1024))
+pb.to_csv(f"{RES}/p0_dinov2b_{DATASET}_paired.csv", index=False)
+print(anomaly.followup_table(df).round(3).to_string())
+pb.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+]
+
+cells_12 = [
+    md("""# P0 · 3CAD: training folders and higher resolution (exploratory)
+
+1. **Training folders.** Counts, image sizes, exact duplicates (within train, and train images that also appear
+   in test), any non-`good` training folders, and a thumbnail sheet per category to eyeball defects in
+   the "defect-free" training data.
+2. **560 px instead of 448 px** (40 × 40 patch grid). Tests whether the low 3CAD scores are partly a resolution
+   floor. DINOv2-S, codebook vs. coreset, M = K ∈ {64, 256, 1,024}, 3 seeds; the full bank is skipped.
+
+**Runtime (T4):** section 1 about 10 min; section 2 about 6–8 h (feature extraction). Finished categories
+are saved to Drive; an interrupted category re-extracts after Run all."""),
+    *setup_cells(),
+
+    md("## 2 · Data"),
+    code("""import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+""" + _DATA_ANY + """
+ROOT = get_3cad()
+print(ROOT)"""),
+
+    md("## 3 · Training-folder inspection"),
+    code("""import pandas as pd
+import matplotlib.pyplot as plt
+from bovw import review
+
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+rows = []
+for cat in ad_data.THREECAD_CATEGORIES:
+    info, fig = review.inspect_train_folder(ROOT, cat, n_thumbs=48)
+    rows.append(info)
+    fig.savefig(f"{RES}/p0_3cad_train_{cat}.png", dpi=110, bbox_inches="tight")
+    plt.show()
+insp = pd.DataFrame(rows)
+insp.to_csv(f"{RES}/p0_3cad_train_inspection.csv", index=False)
+insp"""),
+
+    md("## 4 · 560 px run"),
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from bovw.sweep import load_config
+from bovw import anomaly, stats
+
+cfg = load_config("configs/p0_3cad_hires.yaml")
+cfg["data"]["root"] = ROOT
+hi = anomaly.run(cfg)"""),
+
+    md("## 5 · 560 px vs. 448 px, and codebook vs. coreset at 560 px"),
+    code("""lo = pd.read_csv(f"{RES}/p0_anomaly_3cad.csv")
+cols = ["image_auroc", "image_auroc_top10", "pixel_auroc", "aupro"]
+both = pd.concat({"448": lo[lo.method.isin(["codebook_dist", "coreset_knn"])], "560": hi}, names=["px"]).reset_index(0)
+cmp_ = both.groupby(["px", "method", "k"])[cols].mean().unstack(0).round(3)
+cmp_.to_csv(f"{RES}/p0_3cad_hires_vs_448.csv")
+ph = stats.compare({"3cad_560": hi}, "codebook_dist", "coreset_knn", ks=(64, 256, 1024))
+ph.to_csv(f"{RES}/p0_3cad_hires_paired.csv", index=False)
+display(cmp_)
+ph.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -668,3 +917,6 @@ write(cells_06, "06_p0_anomaly_3cad.ipynb")
 write(cells_07, "07_p0_hybrid.ipynb")
 write(cells_08, "08_p0_hybrid_3cad.ipynb")
 write(cells_09, "09_p0_review_controls.ipynb")
+write(cells_10, "10_p0_review_followups.ipynb")
+write(cells_11, "11_p0_dinov2b.ipynb")
+write(cells_12, "12_p0_3cad_hires.ipynb")

@@ -44,3 +44,22 @@ def test_benchmark_cpu():
     out = review.benchmark(tr, te, k=32, vocab_cfg={"max_descriptors": 3000, "spherical": True})
     for key in ["kmeans_sklearn_cpu_s", "kmeans_torch_s", "coreset_select_s", "score_codebook_s", "score_coreset_s"]:
         assert out[key] >= 0
+
+
+def test_inspect_train_folder(tmp_path):
+    import cv2
+
+    rng = np.random.default_rng(0)
+    base = tmp_path / "cat"
+    for sub in ["train/good", "test/good", "test/crack"]:
+        (base / sub).mkdir(parents=True)
+    imgs = [rng.integers(0, 255, (20, 30, 3), dtype=np.uint8) for _ in range(4)]
+    for i, im in enumerate(imgs):
+        cv2.imwrite(str(base / "train/good" / f"{i}.png"), im)
+    cv2.imwrite(str(base / "train/good" / "dup.png"), imgs[0])          # duplicate within train
+    cv2.imwrite(str(base / "test/good" / "x.png"), imgs[1])             # leaked into test
+    cv2.imwrite(str(base / "test/crack" / "y.png"), rng.integers(0, 255, (20, 30, 3), dtype=np.uint8))
+    out, fig = review.inspect_train_folder(tmp_path, "cat", n_thumbs=0)
+    assert out["n_train"] == 5 and out["n_test"] == 2
+    assert out["dup_within_train"] == 1 and out["train_also_in_test"] == 1
+    assert out["train_sizes"].startswith("30x20") and fig is None

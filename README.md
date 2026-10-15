@@ -36,6 +36,10 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 - `notebooks/07_p0_hybrid.ipynb`: hybrid memory (visual words + residual-coreset patches) on MVTec AD and VisA, exploratory
 - `notebooks/08_p0_hybrid_3cad.ipynb`: preregistered test of the 75/25 hybrid on 3CAD; see `docs/preregistration_hybrid_3cad.md`
 - `notebooks/09_p0_review_controls.ipynb`: controls requested by the referee (medoids, trimmed coreset, larger M, smoothing/FPR sensitivity, image-level bootstrap, same-hardware timing, discovery selectors, STL-10 stability)
+- `notebooks/10_p0_review_followups.ipynb`: paired intervals for those controls, the defect-vocabulary tests (`bovw/lexicon.py`: word purity and word–defect consistency, codebook vs. same-size coreset), example figures, the 3CAD image-level bootstrap, and the pinned Colab environment
+- `notebooks/11_p0_dinov2b.ipynb`: the main codebook-vs-coreset comparison with DINOv2-B (one dataset per session)
+- `notebooks/12_p0_3cad_hires.ipynb`: 3CAD training-folder inspection and a 560 px run
+- `docs/archiving_and_registration.md`: Zenodo release (`.zenodo.json`, `CITATION.cff`) and OSF registration steps
 - `notebooks/05_p0_defect_discovery.ipynb`: unsupervised defect-type discovery on MVTec AD (clusters anomalous images by kind of defect)
 
 Open in Colab: `https://colab.research.google.com/github/M3R2T2L2/bovw_forensics/blob/main/notebooks/<notebook>.ipynb`

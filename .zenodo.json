@@ -1,0 +1,11 @@
+{
+  "title": "bovw_forensics: visual-word codebooks vs. coreset memories for anomaly detection and clustering",
+  "upload_type": "software",
+  "description": "Code, configurations, Colab notebooks, preregistrations and per-run results for the P0 study comparing k-means visual-word codebooks with PatchCore-style greedy coresets and full patch banks (DINOv2 features) on MVTec AD, VisA and 3CAD, plus defect-type discovery and STL-10 clustering. Datasets are not included; see the README for sources and licences.",
+  "creators": [{"name": "Merritt, Lien Lea"}],
+  "license": "MIT",
+  "keywords": ["bag of visual words", "anomaly detection", "PatchCore", "DINOv2", "MVTec AD", "VisA", "3CAD"],
+  "related_identifiers": [
+    {"identifier": "https://github.com/M3R2T2L2/bovw_forensics", "relation": "isSupplementTo", "scheme": "url"}
+  ]
+}

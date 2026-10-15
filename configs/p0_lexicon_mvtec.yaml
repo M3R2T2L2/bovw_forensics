@@ -1,0 +1,32 @@
+# Is the vocabulary a usable defect language? (exploratory; bovw/lexicon.py)
+# Word quality (position NMI, cohesion) and word-defect consistency (leave-one-out
+# nearest-neighbour defect type from the words of each image's top-10 patches),
+# codebook vs. the same-size coreset used as a vocabulary. Reuses cached DINOv2-S
+# features and vocabularies (same cache key as p0_anomaly_mvtec_v2 / p0_review_mvtec).
+
+name: p0_lexicon_mvtec
+
+data:
+  name: mvtec
+  root: /content/mvtec
+  categories: all          # categories with fewer than 2 defect types (after dropping "combined") are skipped
+  size: 448
+  mask_size: 256
+
+cache_dir: /content/drive/MyDrive/bovw-forensics/cache
+results_dir: /content/drive/MyDrive/bovw-forensics/results
+
+extractor:
+  name: dinov2_s
+  params: {image_size: 448, batch_size: 32}
+
+normalize: true
+k: [64, 256, 1024]
+memories: [codebook, coreset]
+topk: 10
+drop_types: [combined]
+
+vocab:
+  seeds: [0, 1, 2]
+  max_descriptors: 200000
+  spherical: true

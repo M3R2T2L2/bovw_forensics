@@ -157,3 +157,58 @@ def stl10_stability(df: pd.DataFrame) -> pd.DataFrame:
         rows.append({"encoding": asg, "k": int(k), "n_runs": len(acc), "nmi_mean": float(np.mean(nmi)),
                      "acc_mean": float(np.mean(acc)), "acc_sd": float(np.std(acc)), "acc_min": float(np.min(acc))})
     return pd.DataFrame(rows).sort_values("acc_mean", ascending=False)
+
+
+def inspect_train_folder(root, category: str, n_thumbs: int = 48, seed: int = 0, thumb: int = 96):
+    """Check an MVTec-layout training folder: counts, image sizes, exact duplicates (within train and
+    between train and test, by MD5), and a thumbnail sheet of random training images to eyeball defects.
+
+    Returns (summary dict, matplotlib figure or None).
+    """
+    import hashlib
+    from collections import Counter
+
+    import cv2
+
+    from .ad_data import _images_in
+
+    base = Path(root) / category
+    train = _images_in(base / "train" / "good")
+    test = [p for d in sorted(x for x in (base / "test").iterdir() if x.is_dir()) for p in _images_in(d)]
+    other_train = sorted(d.name for d in (base / "train").iterdir() if d.is_dir() and d.name != "good")
+
+    def md5(p):
+        return hashlib.md5(Path(p).read_bytes()).hexdigest()
+
+    h_tr = [md5(p) for p in train]
+    h_te = set(md5(p) for p in test)
+    sizes = Counter()
+    for p in train[:: max(1, len(train) // 200)]:     # sample up to ~200 headers
+        img = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
+        if img is not None:
+            sizes[f"{img.shape[1]}x{img.shape[0]}"] += 1
+    out = {"category": category, "n_train": len(train), "n_test": len(test),
+           "other_train_folders": ",".join(other_train),
+           "dup_within_train": len(h_tr) - len(set(h_tr)),
+           "train_also_in_test": sum(h in h_te for h in set(h_tr)),
+           "train_sizes": "; ".join(f"{k} ({v})" for k, v in sizes.most_common(4))}
+    fig = None
+    if n_thumbs and train:
+        import matplotlib.pyplot as plt
+
+        rng = np.random.default_rng(seed)
+        pick = rng.choice(len(train), min(n_thumbs, len(train)), replace=False)
+        cols = 8
+        rows = int(np.ceil(len(pick) / cols))
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 1.4, rows * 1.4), squeeze=False)
+        for ax in axes.ravel():
+            ax.axis("off")
+        for ax, i in zip(axes.ravel(), pick):
+            img = cv2.imread(str(train[i]), cv2.IMREAD_COLOR)
+            if img is not None:
+                ax.imshow(cv2.cvtColor(cv2.resize(img, (thumb, thumb), interpolation=cv2.INTER_AREA),
+                                       cv2.COLOR_BGR2RGB))
+            ax.set_title(train[i].stem[-10:], fontsize=5)
+        fig.suptitle(f"{category}: {len(pick)} random training images", fontsize=8)
+        fig.tight_layout()
+    return out, fig

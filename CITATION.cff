@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this code or its published results, please cite it as below."
+title: "bovw_forensics: visual-word codebooks vs. coreset memories for anomaly detection and clustering"
+type: software
+authors:
+  - family-names: Merritt
+    given-names: Lien Lea
+license: MIT
+repository-code: "https://github.com/M3R2T2L2/bovw_forensics"
+version: 0.2.0
+date-released: 2026-10-15
+keywords:
+  - bag of visual words
+  - anomaly detection
+  - PatchCore
+  - DINOv2
+  - MVTec AD
+  - VisA
+  - 3CAD
