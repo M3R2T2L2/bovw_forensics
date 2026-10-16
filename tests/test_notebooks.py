@@ -76,3 +76,22 @@ def test_notebook_09_review():
     for k in ["p0_review_{ds}.yaml", "image_level_table", "review.benchmark", "p0_review_discovery_mvtec.yaml",
               "p0_review_stl10.yaml", "stl10_stability"]:
         assert k in src, k
+
+
+def test_all_notebook_cells_parse():
+    """Every code cell is valid Python once Colab magics (! and %) are removed."""
+    import ast
+    for f in sorted(NB.glob("*.ipynb")):
+        nb = json.loads(f.read_text())
+        for i, c in enumerate(nb["cells"]):
+            if c["cell_type"] == "code":
+                src = "\n".join(l for l in "".join(c["source"]).splitlines() if not l.strip().startswith(("!", "%")))
+                try:
+                    ast.parse(src)
+                except SyntaxError as e:
+                    raise AssertionError(f"{f.name} cell {i}: {e}") from e
+
+
+def test_notebook_10_3cad_section_uses_drive_copy_only():
+    src = _code("10_p0_review_followups.ipynb")
+    assert "gdown" not in src and "3cad_meta" in src and "except SystemExit" in src

@@ -647,6 +647,42 @@ st.round(3)"""),
 ]
 
 
+_DATA_ANY = """import os, glob, shutil, subprocess
+from bovw import ad_data
+
+def get_mvtec():
+    tar, local = "/content/drive/MyDrive/bovw-forensics/data/mvtec_anomaly_detection.tar.xz", "/content/mvtec"
+    if not os.path.isfile(tar):
+        raise SystemExit("Put mvtec_anomaly_detection.tar.xz in MyDrive/bovw-forensics/data/ (see notebook 02).")
+    if not os.path.isdir(f"{local}/bottle"):
+        os.makedirs(local, exist_ok=True)
+        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
+    return local
+
+def get_visa():
+    tar, local = "/content/drive/MyDrive/bovw-forensics/data/VisA_20220922.tar", "/content/visa"
+    if not os.path.isfile(tar) or os.path.getsize(tar) < 1e9:
+        ad_data.ensure_archive(tar, url=ad_data.VISA_URL, sha256=None)
+    if not os.path.isdir(local):
+        os.makedirs(local)
+        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
+    return ad_data.find_visa_root(local)
+
+def get_3cad():
+    local, archive = "/content/3cad", "/content/3cad_archive"
+    if not os.path.isdir(local):
+        copy = glob.glob("/content/drive/MyDrive/bovw-forensics/data/3CAD*")
+        if not copy:
+            raise SystemExit("Put the 3CAD archive in MyDrive/bovw-forensics/data/ (see notebook 06).")
+        shutil.copy(copy[0], archive)
+        os.makedirs(local)
+        magic = open(archive, "rb").read(4)
+        fmt = "zip" if magic[:2] == b"PK" else ("gztar" if magic[:2] == b"\\x1f\\x8b" else "tar")
+        shutil.unpack_archive(archive, local, fmt)
+        os.remove(archive)
+    return ad_data.find_root(local, "Copper_Stator")
+"""
+
 cells_10 = [
     md("""# P0 · Review follow-ups: paired intervals, defect vocabulary, 3CAD bootstrap (exploratory)
 
@@ -732,69 +768,46 @@ for cat in ["cable", "screw", "metal_nut", "hazelnut"]:
     fig.savefig(f"{RES}/p0_lexicon_{cat}_K{K}.png", dpi=130, bbox_inches="tight")
     plt.show()"""),
 
-    md("## 6 · Image-level bootstrap on 3CAD"),
-    *_cells_06_data()[1:],   # the 3CAD download/extract cell (its "## 2 · Data" heading dropped)
-    code("""from pathlib import Path
+    md("""## 6 · Image-level bootstrap on 3CAD
+Needs only the test labels. They are rebuilt once from the 3CAD archive in `MyDrive/bovw-forensics/data/`
+and saved to Drive, so later runs need no archive. If the archive is not on Drive, this section is skipped
+(download it in a browser from the link in notebook 06 and upload it there)."""),
+    code(_DATA_ANY + """
+from pathlib import Path
 from bovw import review
 from bovw.anomaly import _LazyAD
 
-META = Path("/content/cache_3cad")          # labels are rebuilt from the archive (3CAD features were never on Drive)
+META = Path(f"{CACHE}/3cad_meta")            # labels only (small); 3CAD features were never on Drive
 cats = ad_data.categories("3cad")
-for cat in cats:
-    _LazyAD({"name": "3cad", "root": ROOT, "size": 448, "mask_size": 256}, cat, META, f"3cad_{cat}_s448_m256").get_meta()
-specs = [{"label": "3cad: codebook - coreset", "cfg_name": "p0_anomaly_3cad", "dataset": "3cad", "categories": cats,
-          "a": ("codebook_dist", k), "b": ("coreset_knn", k)} for k in [64, 256, 1024]]
-specs += [{"label": "3cad: hybrid75 - codebook", "cfg_name": "p0_hybrid_3cad", "dataset": "3cad", "categories": cats,
-           "a": ("hybrid_w75", k), "b": ("codebook_dist", k)} for k in [256, 1024]]
-img3 = review.image_level_table(specs, results_dir=RES, cache_dir=META, n_boot=2000)
-img3.to_csv(f"{RES}/p0_review_image_bootstrap_3cad.csv", index=False)
-img3.round(4)"""),
+need = [c for c in cats if not (META / f"3cad_{c}_s448_m256__meta.npz").exists()]
+ok = True
+if need:
+    try:
+        ROOT3 = get_3cad()
+        for cat in need:
+            _LazyAD({"name": "3cad", "root": ROOT3, "size": 448, "mask_size": 256}, cat, META,
+                    f"3cad_{cat}_s448_m256").get_meta()
+    except SystemExit as e:
+        ok = False
+        print("Skipping the 3CAD bootstrap:", e)
+if ok:
+    specs = [{"label": "3cad: codebook - coreset", "cfg_name": "p0_anomaly_3cad", "dataset": "3cad", "categories": cats,
+              "a": ("codebook_dist", k), "b": ("coreset_knn", k)} for k in [64, 256, 1024]]
+    specs += [{"label": "3cad: hybrid75 - codebook", "cfg_name": "p0_hybrid_3cad", "dataset": "3cad", "categories": cats,
+               "a": ("hybrid_w75", k), "b": ("codebook_dist", k)} for k in [256, 1024]]
+    img3 = review.image_level_table(specs, results_dir=RES, cache_dir=META, n_boot=2000)
+    img3.to_csv(f"{RES}/p0_review_image_bootstrap_3cad.csv", index=False)
+    display(img3.round(4))"""),
 
     md("## 7 · Record the environment (pinned package versions for the archive)"),
     code("""import platform, subprocess, torch
 lock = subprocess.run(["pip", "freeze"], capture_output=True, text=True).stdout
 head = (f"# Colab environment, {pd.Timestamp.now():%Y-%m-%d}; Python {platform.python_version()}; "
-        f"torch {torch.__version__}; CUDA {torch.version.cuda}; GPU {torch.cuda.get_device_name(0)}\n")
+        f"torch {torch.__version__}; CUDA {torch.version.cuda}; GPU {torch.cuda.get_device_name(0)}\\n")
 open(f"{RES}/requirements-colab.lock", "w").write(head + lock)
 print(head, len(lock.splitlines()), "packages written to requirements-colab.lock on Drive")"""),
 ]
 
-
-_DATA_ANY = """import os, glob, shutil, subprocess
-from bovw import ad_data
-
-def get_mvtec():
-    tar, local = "/content/drive/MyDrive/bovw-forensics/data/mvtec_anomaly_detection.tar.xz", "/content/mvtec"
-    if not os.path.isfile(tar):
-        raise SystemExit("Put mvtec_anomaly_detection.tar.xz in MyDrive/bovw-forensics/data/ (see notebook 02).")
-    if not os.path.isdir(f"{local}/bottle"):
-        os.makedirs(local, exist_ok=True)
-        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
-    return local
-
-def get_visa():
-    tar, local = "/content/drive/MyDrive/bovw-forensics/data/VisA_20220922.tar", "/content/visa"
-    if not os.path.isfile(tar) or os.path.getsize(tar) < 1e9:
-        ad_data.ensure_archive(tar, url=ad_data.VISA_URL, sha256=None)
-    if not os.path.isdir(local):
-        os.makedirs(local)
-        subprocess.run(["tar", "-xf", tar, "-C", local], check=True)
-    return ad_data.find_visa_root(local)
-
-def get_3cad():
-    local, archive = "/content/3cad", "/content/3cad_archive"
-    if not os.path.isdir(local):
-        copy = glob.glob("/content/drive/MyDrive/bovw-forensics/data/3CAD*")
-        if not copy:
-            raise SystemExit("Put the 3CAD archive in MyDrive/bovw-forensics/data/ (see notebook 06).")
-        shutil.copy(copy[0], archive)
-        os.makedirs(local)
-        magic = open(archive, "rb").read(4)
-        fmt = "zip" if magic[:2] == b"PK" else ("gztar" if magic[:2] == b"\\x1f\\x8b" else "tar")
-        shutil.unpack_archive(archive, local, fmt)
-        os.remove(archive)
-    return ad_data.find_root(local, "Copper_Stator")
-"""
 
 cells_11 = [
     md("""# P0 · Second backbone: DINOv2-B (exploratory)
