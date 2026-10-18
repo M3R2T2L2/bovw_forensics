@@ -21,7 +21,10 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_review_timing.csv | same-hardware timings, T4, K = 1,024 | 09 |
 | p0_review_discovery_summary.csv | defect discovery with top-10 patches chosen by codebook, full bank and coreset; true vs. estimated k | 09 |
 | p0_review_stl10_summary.csv | STL-10 stability rerun (n_init 20, 10 clustering seeds) with mean-pool and CLS+mean-pool baselines | 09 |
+| p0_review_controls_paired.csv | paired per-category bootstrap CIs for the review controls (medoids, trimming, large M, sigma/FPR), MVTec + VisA + pooled | 10 |
+| p0_review_image_bootstrap_3cad.csv | two-level bootstrap of image-AUROC differences on 3CAD | 10 |
+| p0_lexicon_mvtec_summary.csv, p0_lexicon_mvtec_paired.csv | defect-vocabulary tests (`bovw/lexicon.py`): word purity and word-defect consistency, codebook vs. same-size coreset | 10 |
 
-The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`) are on Drive and still to be copied here.
+The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`, `p0_lexicon_mvtec.csv`) are on Drive and still to be copied here.
 
 Per-image scores and saved maps are on Drive (`results/scores`, `results/maps`), not here.

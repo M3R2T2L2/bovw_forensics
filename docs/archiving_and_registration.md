@@ -7,8 +7,8 @@
    for the title, author, licence and description.
 3. Add the DOI badge to the README and the DOI to `CITATION.cff` (`doi:` field).
 
-Before tagging, commit the pinned environment from the Colab run (`requirements-colab.lock`, written by the last
-cell of notebook 10) so the archive records the exact package versions.
+Before tagging, the key versions are pinned in `requirements-colab.txt`; also copy the full `requirements-colab.lock`
+(written by the last cell of notebook 10, on Drive in `results/`) into the repository so the archive records every package.
 
 ## OSF (preregistrations)
 
