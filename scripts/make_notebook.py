@@ -816,13 +816,14 @@ The referee asked whether the codebook-vs-coreset result depends on DINOv2-S. Th
 with **DINOv2-B** (768-d patch tokens), same protocol: 448 px, M = K ∈ {64, 256, 1,024}, 3 seeds, codebook vs.
 greedy coreset (plus the full bank on MVTec AD and VisA).
 
-**One dataset per Colab session:** set `DATASET` below to `"mvtec"`, then `"visa"`, then `"3cad"`.
+**One dataset per Colab session:** set `DATASET` below to `"mvtec"`, then `"visa"`, then `"3cad"`. For the register control, set `BACKBONE = "dinov2breg"` with `DATASET = "mvtec"`.
 **Runtime (T4):** MVTec about 2–3 h, VisA about 4–5 h, 3CAD about 5–6 h. Finished runs are saved to Drive;
 after a disconnect, Run all again."""),
     *setup_cells(),
 
     md("## 2 · Data"),
     code("""DATASET = "mvtec"     # "mvtec", then "visa", then "3cad" (one per session)
+BACKBONE = "dinov2b"  # "dinov2breg" = DINOv2-B with registers (control, MVTec only)
 
 import torch
 if not torch.cuda.is_available():
@@ -837,14 +838,14 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 from bovw.sweep import load_config
 from bovw import anomaly, stats
 
-cfg = load_config(f"configs/p0_dinov2b_{DATASET}.yaml")
+cfg = load_config(f"configs/p0_{BACKBONE}_{DATASET}.yaml")
 cfg["data"]["root"] = ROOT
 df = anomaly.run(cfg)"""),
 
     md("## 4 · Codebook vs. coreset with DINOv2-B (paired over categories)"),
     code("""RES = cfg["results_dir"]
 pb = stats.compare({DATASET: df}, "codebook_dist", "coreset_knn", ks=(64, 256, 1024))
-pb.to_csv(f"{RES}/p0_dinov2b_{DATASET}_paired.csv", index=False)
+pb.to_csv(f"{RES}/p0_{BACKBONE}_{DATASET}_paired.csv", index=False)
 print(anomaly.followup_table(df).round(3).to_string())
 pb.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
 ]
