@@ -100,4 +100,6 @@ def test_notebook_10_3cad_section_uses_drive_copy_only():
 def test_notebook_12_sections_self_contained():
     nb = json.loads((NB / "12_p0_3cad_hires.ipynb").read_text())
     last = "".join(nb["cells"][-1]["source"])
-    assert 'RES = cfg["results_dir"]' in last and "import pandas as pd" in last
+    assert "load_results" in last and "import pandas as pd" in last and "cfg[" not in last
+    src = _code("12_p0_3cad_hires.ipynb")
+    assert 'SKIP_CATEGORIES = ["Aluminum_New_Ipad"]' in src
