@@ -95,3 +95,9 @@ def test_all_notebook_cells_parse():
 def test_notebook_10_3cad_section_uses_drive_copy_only():
     src = _code("10_p0_review_followups.ipynb")
     assert "gdown" not in src and "3cad_meta" in src and "except SystemExit" in src
+
+
+def test_notebook_12_sections_self_contained():
+    nb = json.loads((NB / "12_p0_3cad_hires.ipynb").read_text())
+    last = "".join(nb["cells"][-1]["source"])
+    assert 'RES = cfg["results_dir"]' in last and "import pandas as pd" in last

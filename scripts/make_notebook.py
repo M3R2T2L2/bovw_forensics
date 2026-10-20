@@ -898,7 +898,9 @@ cfg["data"]["root"] = ROOT
 hi = anomaly.run(cfg)"""),
 
     md("## 5 · 560 px vs. 448 px, and codebook vs. coreset at 560 px"),
-    code("""lo = pd.read_csv(f"{RES}/p0_anomaly_3cad.csv")
+    code("""import pandas as pd
+RES = cfg["results_dir"]          # self-contained: works even if section 3 was skipped
+lo = pd.read_csv(f"{RES}/p0_anomaly_3cad.csv")
 cols = ["image_auroc", "image_auroc_top10", "pixel_auroc", "aupro"]
 both = pd.concat({"448": lo[lo.method.isin(["codebook_dist", "coreset_knn"])], "560": hi}, names=["px"]).reset_index(0)
 cmp_ = both.groupby(["px", "method", "k"])[cols].mean().unstack(0).round(3)
