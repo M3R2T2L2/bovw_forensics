@@ -24,6 +24,9 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_review_controls_paired.csv | paired per-category bootstrap CIs for the review controls (medoids, trimming, large M, sigma/FPR), MVTec + VisA + pooled | 10 |
 | p0_review_image_bootstrap_3cad.csv | two-level bootstrap of image-AUROC differences on 3CAD | 10 |
 | p0_lexicon_mvtec_summary.csv, p0_lexicon_mvtec_paired.csv | defect-vocabulary tests (`bovw/lexicon.py`): word purity and word-defect consistency, codebook vs. same-size coreset | 10 |
+| p0_dinov2b_mvtec.csv, p0_dinov2b_mvtec_paired.csv | DINOv2-B on MVTec: per-run results and codebook-vs-coreset paired CIs | 11 |
+| p0_3cad_train_inspection.csv | 3CAD training folders: counts, sizes, duplicates, train/test overlap | 12 |
+| p0_3cad_hires_vs_448.csv | 3CAD at 560 vs. 448 px, 7 categories (Aluminum_New_Ipad excluded: RAM) | 12 |
 
 The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`, `p0_lexicon_mvtec.csv`) are on Drive and still to be copied here.
 

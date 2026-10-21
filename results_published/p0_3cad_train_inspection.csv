@@ -1,0 +1,9 @@
+category,n_train,n_test,other_train_folders,dup_within_train,train_also_in_test,train_sizes
+Aluminum_Camera_Cover,784,1446,,14,5,1024x1024 (194); 880x1024 (20); 952x576 (15); 720x288 (11)
+Aluminum_Ipad,2096,2047,,0,0,1024x1024 (160); 1024x352 (45); 676x1024 (3); 1024x736 (2)
+Aluminum_Middle_Frame,1548,1479,,0,0,800x1024 (158); 800x952 (50); 950x1024 (14)
+Aluminum_New_Ipad,2233,4936,,0,0,1024x1024 (157); 1024x910 (14); 1024x628 (9); 1024x904 (7)
+Aluminum_New_Middle_Frame,1072,1406,,0,0,500x1024 (33); 800x1024 (19); 1024x700 (17); 776x700 (16)
+Aluminum_Pc,1698,3161,,0,0,1024x1024 (153); 352x1024 (22); 480x1024 (14); 824x1024 (6)
+Copper_Stator,409,959,,0,0,1024x1024 (205)
+Iron_Stator,653,1112,,0,0,1024x1024 (218)
