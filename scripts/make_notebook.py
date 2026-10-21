@@ -840,6 +840,10 @@ from bovw import anomaly, stats
 
 cfg = load_config(f"configs/p0_{BACKBONE}_{DATASET}.yaml")
 cfg["data"]["root"] = ROOT
+# 3CAD's Aluminum_New_Ipad (4,936 test images) exceeds Colab RAM with 768-d features; set [] on a high-RAM runtime
+SKIP_CATEGORIES = ["Aluminum_New_Ipad"] if DATASET == "3cad" else []
+if SKIP_CATEGORIES:
+    cfg["data"]["categories"] = [c for c in ad_data.categories(DATASET) if c not in SKIP_CATEGORIES]
 df = anomaly.run(cfg)"""),
 
     md("## 4 · Codebook vs. coreset with DINOv2-B (paired over categories)"),
