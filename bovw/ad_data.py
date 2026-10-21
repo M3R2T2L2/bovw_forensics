@@ -90,8 +90,8 @@ class LazyImages:
     get_batch(indices) decodes a batch with a small thread pool; extractors use it when present.
     """
 
-    def __init__(self, paths: list, size: int, fast: bool = True, workers: int = 4):
-        self.paths, self.size, self.fast, self.workers = list(paths), size, fast, workers
+    def __init__(self, paths: list, size: int, fast: bool = True, workers: int = 4, pad: bool = False):
+        self.paths, self.size, self.fast, self.workers, self.pad = list(paths), size, fast, workers, pad
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -99,7 +99,7 @@ class LazyImages:
     def __getitem__(self, i):
         if isinstance(i, slice):
             return [self[j] for j in range(*i.indices(len(self)))]
-        return _read_rgb(self.paths[i], self.size, fast=self.fast)
+        return _read_rgb(self.paths[i], self.size, fast=self.fast, pad=self.pad)
 
     def __iter__(self):
         for i in range(len(self)):
@@ -113,13 +113,16 @@ class LazyImages:
 
 
 def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int = 256,
-                     lazy: bool = False) -> ADSplit:
+                     lazy: bool = False, pad: bool = False, dedup_train: bool = False) -> ADSplit:
     """MVTec-layout loader tolerant of other image formats and mask names (used for 3CAD).
 
     <root>/<category>/train/good/*, <root>/<category>/test/<type>/*,
     <root>/<category>/ground_truth/<type>/<stem>[_mask].<ext>; any non-zero mask pixel = anomaly.
     Images are decoded in parallel (half-resolution JPEG decode when large enough).
+    pad: pad images and masks to a square before resizing (keeps the aspect ratio).
+    dedup_train: drop byte-identical duplicates within train/good and train images that also appear in test.
     """
+    import hashlib
     from concurrent.futures import ThreadPoolExecutor
 
     base = Path(root) / category
@@ -129,13 +132,23 @@ def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int =
     tests = [(d.name, p) for d in sorted(x for x in (base / "test").iterdir() if x.is_dir()) for p in _images_in(d)]
     if not train_paths or not tests:
         raise FileNotFoundError(f"{base}: expected train/good and test/<type> image folders")
+    if dedup_train:
+        md5 = lambda q: hashlib.md5(Path(q).read_bytes()).hexdigest()  # noqa: E731
+        test_h = {md5(p) for _, p in tests}
+        seen, kept = set(), []
+        for q in train_paths:
+            h = md5(q)
+            if h not in seen and h not in test_h:
+                kept.append(q)
+            seen.add(h)
+        train_paths = kept
     cv2.setNumThreads(1)
     if lazy:
-        train, imgs = LazyImages(train_paths, size), LazyImages([p for _, p in tests], size)
+        train, imgs = LazyImages(train_paths, size, pad=pad), LazyImages([p for _, p in tests], size, pad=pad)
     else:
         with ThreadPoolExecutor(max_workers=4) as ex:
-            train = list(ex.map(lambda q: _read_rgb(q, size, fast=True), train_paths))
-            imgs = list(ex.map(lambda t: _read_rgb(t[1], size, fast=True), tests))
+            train = list(ex.map(lambda q: _read_rgb(q, size, fast=True, pad=pad), train_paths))
+            imgs = list(ex.map(lambda t: _read_rgb(t[1], size, fast=True, pad=pad), tests))
     labels, masks, types, missing = [], [], [], []
     for t, p in tests:
         types.append(t)
@@ -149,6 +162,8 @@ def load_mvtec_style(root: str, category: str, size: int = 448, mask_size: int =
         if m is None:
             missing.append(f"{t}/{p.name}")
             m = np.zeros((mask_size, mask_size), np.uint8)
+        elif pad:
+            m = pad_square(m)
         masks.append((cv2.resize(m, (mask_size, mask_size), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8))
     if missing:
         raise FileNotFoundError(f"{len(missing)} anomalous images have no mask in {base / 'ground_truth'}, "
@@ -165,22 +180,36 @@ class ADSplit:
     test_types: list
 
 
-def _read_rgb(path: Path, size: int, fast: bool = False) -> np.ndarray:
+def pad_square(img: np.ndarray, value: int = 0) -> np.ndarray:
+    """Pad an image (or mask) symmetrically to a square, so resizing does not change its aspect ratio."""
+    h, w = img.shape[:2]
+    if h == w:
+        return img
+    d = abs(h - w)
+    a, b = d // 2, d - d // 2
+    top, bottom, left, right = (a, b, 0, 0) if h < w else (0, 0, a, b)
+    return cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=value)
+
+
+def _read_rgb(path: Path, size: int, fast: bool = False, pad: bool = False) -> np.ndarray:
     """Read, convert to RGB and resize to size x size.
 
     fast=True decodes JPEGs at half resolution (much quicker for VisA's ~1.5k px
     images) and falls back to a full decode if that would be smaller than `size`.
+    pad=True pads to a square first (black borders), keeping the aspect ratio.
     """
     img = None
     if fast:
         img = cv2.imread(str(path), cv2.IMREAD_REDUCED_COLOR_2)
-        if img is not None and min(img.shape[:2]) < size:
+        if img is not None and (max if pad else min)(img.shape[:2]) < size:
             img = None
     if img is None:
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(path)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if pad:
+        img = pad_square(img)
     return cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
 
 

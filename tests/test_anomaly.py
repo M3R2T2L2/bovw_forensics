@@ -471,3 +471,33 @@ def test_discovery_selectors_and_estimated_k(tmp_path):
     est = df[df.setting == "oracle_estk"]
     assert (est.n_clusters >= 2).all() and (est.n_clusters <= 8).all()
     assert len(discovery.run(cfg, progress=False)) == len(df)
+
+
+def test_pad_square_and_dedup_train(tmp_path):
+    import cv2
+    from bovw import ad_data
+
+    img = np.full((20, 60, 3), 200, np.uint8)
+    p = ad_data.pad_square(img)
+    assert p.shape == (60, 60, 3) and p[0, 0, 0] == 0 and p[30, 30, 0] == 200
+    m = np.zeros((20, 60), np.uint8); m[5:10, 50:55] = 255
+    pm = ad_data.pad_square(m)
+    assert pm.shape == (60, 60) and pm[20 + 5, 50] == 255          # mask shifted with the image
+
+    rng = np.random.default_rng(0)
+    base = tmp_path / "cat"
+    for sub in ["train/good", "test/good", "test/crack", "ground_truth/crack"]:
+        (base / sub).mkdir(parents=True)
+    ims = [rng.integers(0, 255, (16, 40, 3), dtype=np.uint8) for _ in range(4)]
+    for i, im in enumerate(ims):
+        cv2.imwrite(str(base / "train/good" / f"{i}.png"), im)
+    cv2.imwrite(str(base / "train/good" / "dup.png"), ims[0])
+    cv2.imwrite(str(base / "test/good" / "g.png"), ims[1])                # leaked
+    cv2.imwrite(str(base / "test/crack" / "c.png"), rng.integers(0, 255, (16, 40, 3), dtype=np.uint8))
+    mk = np.zeros((16, 40), np.uint8); mk[:, 30:] = 255
+    cv2.imwrite(str(base / "ground_truth/crack" / "c_mask.png"), mk)
+    s0 = ad_data.load_mvtec_style(tmp_path, "cat", size=32, mask_size=32)
+    s1 = ad_data.load_mvtec_style(tmp_path, "cat", size=32, mask_size=32, pad=True, dedup_train=True)
+    assert len(s0.train_images) == 5 and len(s1.train_images) == 3
+    assert s1.train_images[0].shape == (32, 32, 3) and s1.train_images[0][0, 0].sum() == 0   # black border
+    assert s0.test_masks[0].sum() > s1.test_masks[0].sum() > 0           # padded mask covers less of the square

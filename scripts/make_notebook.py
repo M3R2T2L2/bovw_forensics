@@ -942,6 +942,75 @@ res_gain.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
 ]
 
 
+cells_13 = [
+    md("""# P0 · 3CAD with padded (not stretched) images and a cleaned training set (exploratory)
+
+Notebook 12 found that resolution does not explain 3CAD's low scores, that most categories mix image shapes
+(stretched to a square at 448 px), and that Aluminum_Camera_Cover has duplicate and leaked training images.
+This run pads every image and mask to a square before resizing and drops duplicate and leaked training
+images, then compares with the original 448 px run on the same categories and seeds.
+
+**Runtime (T4):** about 4 h, mostly feature extraction. Finished runs are saved to Drive; after a disconnect,
+Run all again (an interrupted category re-extracts). Needs the 3CAD archive in `MyDrive/bovw-forensics/data/`."""),
+    *setup_cells(),
+
+    md("## 2 · Data"),
+    code("""import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+""" + _DATA_ANY + """
+ROOT = get_3cad()
+print(ROOT)"""),
+
+    md("## 3 · Run"),
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from bovw.sweep import load_config
+from bovw import anomaly
+
+cfg = load_config("configs/p0_3cad_pad.yaml")
+cfg["data"]["root"] = ROOT
+pad = anomaly.run(cfg)"""),
+
+    md("""## 4 · Padded vs. stretched, and codebook vs. coreset when padded
+Reads the saved results from Drive, so it works in a fresh session (run Setup, then this cell)."""),
+    code("""import pandas as pd
+from pathlib import Path
+from bovw import stats
+from bovw.sweep import load_results
+
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+new = load_results(Path(RES) / "p0_3cad_pad.jsonl")
+old = pd.read_csv(f"{RES}/p0_anomaly_3cad.csv")
+old = old[old.method.isin(["codebook_dist", "coreset_knn"])]
+key = ["category", "method", "k", "vocab_seed"]
+for d in (new, old):
+    d["k"] = d["k"].astype(int)
+n_runs = new.drop_duplicates(key).groupby("category").size()
+complete = n_runs[n_runs >= 18].index
+print("compared:", sorted(complete), " incomplete:", sorted(set(n_runs.index) - set(complete)))
+common = new[new.category.isin(complete)][key].merge(old[key]).drop_duplicates()
+new_c, old_c = new.merge(common), old.merge(common)
+cols = ["image_auroc", "image_auroc_top10", "pixel_auroc", "aupro"]
+cmp_ = pd.concat({"stretched": old_c, "padded": new_c}, names=["resize"]).reset_index(0)
+cmp_ = cmp_.groupby(["resize", "method", "k", "category"])[cols].mean().groupby(level=[0, 1, 2]).mean().unstack(0).round(3)
+cmp_.to_csv(f"{RES}/p0_3cad_pad_vs_stretch.csv")
+both = pd.concat([new_c.assign(method=new_c.method + "_pad"), old_c.assign(method=old_c.method + "_stretch")])
+gain = pd.concat([stats.compare({"3cad": both}, f"{m}_pad", f"{m}_stretch", ks=(64, 256, 1024))
+                  for m in ["codebook_dist", "coreset_knn"]])
+gain.to_csv(f"{RES}/p0_3cad_pad_gain.csv", index=False)
+pp = stats.compare({"3cad_pad": new_c}, "codebook_dist", "coreset_knn", ks=(64, 256, 1024))
+pp.to_csv(f"{RES}/p0_3cad_pad_paired.csv", index=False)
+per_cat = pd.concat({"stretched": old_c, "padded": new_c}, names=["resize"]).reset_index(0)
+per_cat = per_cat[per_cat.k == 1024].pivot_table(index="category", columns=["method", "resize"], values="aupro").round(3)
+per_cat.to_csv(f"{RES}/p0_3cad_pad_per_category_aupro1024.csv")
+display(cmp_)
+display(per_cat)
+display(gain.drop(columns=["p_sign", "p_wilcoxon"]).round(3))
+pp.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -966,3 +1035,4 @@ write(cells_09, "09_p0_review_controls.ipynb")
 write(cells_10, "10_p0_review_followups.ipynb")
 write(cells_11, "11_p0_dinov2b.ipynb")
 write(cells_12, "12_p0_3cad_hires.ipynb")
+write(cells_13, "13_p0_3cad_pad.ipynb")

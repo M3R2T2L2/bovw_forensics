@@ -529,7 +529,9 @@ class _LazyAD:
                                                  self.cfg.get("mask_size", 256))
             elif name == "3cad":
                 self._split = ad_data.load_mvtec_style(self.cfg["root"], self.category, self.cfg.get("size", 448),
-                                                       self.cfg.get("mask_size", 256), lazy=True)
+                                                       self.cfg.get("mask_size", 256), lazy=True,
+                                                       pad=self.cfg.get("pad_square", False),
+                                                       dedup_train=self.cfg.get("dedup_train", False))
             elif name == "visa":
                 self._split = ad_data.load_visa(self.cfg["root"], self.category, self.cfg.get("size", 448),
                                                 self.cfg.get("mask_size", 256))
@@ -600,6 +602,7 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
 
     for cat in cats:
         tag = f"{data_cfg.get('name', 'mvtec')}_{cat}_s{data_cfg.get('size', 448)}_m{mask_size}"
+        tag += ("_pad" if data_cfg.get("pad_square") else "") + ("_dedup" if data_cfg.get("dedup_train") else "")
         ds = _LazyAD(data_cfg, cat, cache_dir, tag)
         for ex in cfg["extractors"]:
             ex_name, ex_params = ex["name"], ex.get("params", {})

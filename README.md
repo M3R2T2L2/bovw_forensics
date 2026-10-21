@@ -39,6 +39,7 @@ images → extract → cache → vocab → encode → eval → results CSV → p
 - `notebooks/10_p0_review_followups.ipynb`: paired intervals for those controls, the defect-vocabulary tests (`bovw/lexicon.py`: word purity and word–defect consistency, codebook vs. same-size coreset), example figures, the 3CAD image-level bootstrap, and the pinned Colab environment
 - `notebooks/11_p0_dinov2b.ipynb`: the main codebook-vs-coreset comparison with DINOv2-B (one dataset per session)
 - `notebooks/12_p0_3cad_hires.ipynb`: 3CAD training-folder inspection and a 560 px run
+- `notebooks/13_p0_3cad_pad.ipynb`: 3CAD with aspect-preserving padding and duplicate/leaked training images removed
 - `docs/archiving_and_registration.md`: Zenodo release (`.zenodo.json`, `CITATION.cff`) and OSF registration steps
 - `notebooks/05_p0_defect_discovery.ipynb`: unsupervised defect-type discovery on MVTec AD (clusters anomalous images by kind of defect)
 
