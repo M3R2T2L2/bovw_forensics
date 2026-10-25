@@ -626,12 +626,15 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                 extractor = extractor or get_extractor(ex_name, **ex_params)
                 return extractor(images, progress=progress)
 
+            # low_memory: memory-map the cached features (writable, so they can be L2-normalised in place);
+            # the OS pages them in and out instead of holding several GB of features in RAM
+            fmode = "r+" if low_mem else False
             tr, tr_info = cache.get_or_compute(cache_dir, f"{tag}_train", ex_name, cache_params,
-                                              lambda: extract(ds.split.train_images))
+                                              lambda: extract(ds.split.train_images), mmap=fmode)
             if low_mem and ds._split is not None:
                 ds._split.train_images = []   # free decoded training images before the test pass
             te, te_info = cache.get_or_compute(cache_dir, f"{tag}_test", ex_name, cache_params,
-                                              lambda: extract(ds.split.test_images))
+                                              lambda: extract(ds.split.test_images), mmap=fmode)
             del extractor
             meta = ds.get_meta()
             if low_mem:
@@ -673,9 +676,11 @@ def run(cfg: dict, progress: bool = True) -> pd.DataFrame:
                     print(f"[{cat:>10}|{ex_name:>10}] {method:<15} K={k:<5} s={seed}  "
                           f"image={row['image_auroc']:.3f}  pixel={pa:.3f}")
 
-            if low_mem:  # normalise the loaded float16 arrays in place: no float32 copies of the bank
-                tr_desc = _norm_inplace(np.asarray(tr.desc), normalize)
-                te_desc = _norm_inplace(np.asarray(te.desc), normalize)
+            if low_mem:  # normalise the memory-mapped float16 arrays in place (idempotent): no float32 copies
+                tr_desc = _norm_inplace(tr.desc, normalize)
+                te_desc = _norm_inplace(te.desc, normalize)
+                if hasattr(tr_desc, "flush"):
+                    tr_desc.flush(), te_desc.flush()
             else:
                 tr_desc = _norm(tr.desc, normalize)
                 te_desc = _norm(te.desc, normalize)

@@ -501,3 +501,28 @@ def test_pad_square_and_dedup_train(tmp_path):
     assert len(s0.train_images) == 5 and len(s1.train_images) == 3
     assert s1.train_images[0].shape == (32, 32, 3) and s1.train_images[0][0, 0].sum() == 0   # black border
     assert s0.test_masks[0].sum() > s1.test_masks[0].sum() > 0           # padded mask covers less of the square
+
+
+def test_low_memory_uses_memmap_and_is_rerunnable(tmp_path):
+    from bovw import cache as fcache
+    from bovw.extract import LocalFeatures
+
+    rng = np.random.default_rng(0)
+    f = LocalFeatures(desc=rng.normal(size=(50, 8)).astype(np.float32), offsets=np.arange(0, 51, 10))
+    a, info = fcache.get_or_compute(tmp_path, "d", "x", {}, lambda: f, mmap="r+")
+    assert isinstance(a.desc, np.memmap) and not info["cache_hit"]
+    b, info = fcache.get_or_compute(tmp_path, "d", "x", {}, lambda: None, mmap="r+")
+    assert isinstance(b.desc, np.memmap) and info["cache_hit"]
+    c, _ = fcache.get_or_compute(tmp_path, "d", "x", {}, lambda: None)
+    assert not isinstance(c.desc, np.memmap)
+
+    base = {"data": {"name": "synthetic", "categories": ["tex"], "size": 128, "mask_size": 64,
+                     "n_train": 20, "n_good": 10, "n_bad": 10},
+            "extractors": [{"name": "dense_sift", "params": {"resize": 128, "step": 8, "size": 16, "n_jobs": 2}}],
+            "methods": {"codebook": {"k": [16], "scores": ["codebook_dist"]},
+                        "subsample": {"sizes": [16], "methods": ["coreset_knn"]}},
+            "vocab": {"seeds": [0], "max_descriptors": 20000, "spherical": True}, "low_memory": True,
+            "cache_dir": str(tmp_path / "c")}
+    r1 = anomaly.run({**base, "name": "m1", "results_dir": str(tmp_path / "r1")}, progress=False).sort_values("method")
+    r2 = anomaly.run({**base, "name": "m2", "results_dir": str(tmp_path / "r2")}, progress=False).sort_values("method")
+    assert np.allclose(r1.pixel_auroc.values, r2.pixel_auroc.values, atol=2e-3)   # re-normalising the cached copy is harmless
