@@ -212,3 +212,90 @@ def inspect_train_folder(root, category: str, n_thumbs: int = 48, seed: int = 0,
         fig.suptitle(f"{category}: {len(pick)} random training images", fontsize=8)
         fig.tight_layout()
     return out, fig
+
+
+def dhash(path, size: int = 8) -> int:
+    """64-bit difference hash (grayscale, (size+1) x size, horizontal gradient signs)."""
+    import cv2
+
+    g = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if g is None:
+        raise FileNotFoundError(path)
+    g = cv2.resize(g, (size + 1, size), interpolation=cv2.INTER_AREA).astype(np.int16)
+    bits = (g[:, 1:] > g[:, :-1]).ravel()
+    return int("".join("1" if b else "0" for b in bits), 2)
+
+
+def near_duplicates(root, category: str, thresholds=(0, 4, 8)) -> dict:
+    """Perceptual near-duplicate check of an MVTec-layout category (dHash Hamming distance).
+
+    For each threshold t: training images with another training image within t bits, and test images with
+    a training image within t bits (possible leaks). t = 0 also catches re-encoded exact copies.
+    """
+    from .ad_data import _images_in
+
+    base = Path(root) / category
+    train = _images_in(base / "train" / "good")
+    test = [p for d in sorted(x for x in (base / "test").iterdir() if x.is_dir()) for p in _images_in(d)]
+    ht = np.array([dhash(p) for p in train], dtype=np.uint64)
+    hs = np.array([dhash(p) for p in test], dtype=np.uint64)
+
+    def ham(a, b):  # (len(a), len(b)) Hamming distances, chunked
+        out = np.empty((len(a), len(b)), np.uint8)
+        for i in range(0, len(a), 512):
+            x = a[i:i + 512, None] ^ b[None, :]
+            out[i:i + 512] = np.unpackbits(x.view(np.uint8).reshape(*x.shape, 8), axis=-1).sum(-1)
+        return out
+
+    tt = ham(ht, ht)
+    np.fill_diagonal(tt, 255)
+    ts = ham(hs, ht)
+    out = {"category": category, "n_train": len(train), "n_test": len(test)}
+    for t in thresholds:
+        out[f"train_near_train_le{t}"] = int((tt.min(1) <= t).sum()) if len(train) > 1 else 0
+        out[f"test_near_train_le{t}"] = int((ts.min(1) <= t).sum()) if len(train) else 0
+    return out
+
+
+def token_norm_check(cache_dir, tag: str, extractor: str, k: int = 64, seed: int = 0, size_params=None,
+                     vocab_cfg=None) -> dict:
+    """Do the highest-scoring patches of normal test images have unusually large token norms?
+
+    Uses the raw cached features (only valid for caches written without in-place normalisation, i.e. runs
+    without low_memory). For each normal test image, takes its single highest-scoring patch under the
+    K-word codebook and under the same-size coreset, and reports where that patch's token norm falls in the
+    distribution of all test-patch norms (percentile), plus the Spearman correlation between codebook score
+    and norm over all test patches.
+    """
+    from scipy.stats import spearmanr
+
+    from . import cache
+    from .anomaly import cached_vocabulary, greedy_coreset, min_dist, nearest_word
+    from .vocab import build_vocabulary, l2n
+
+    params = size_params or {"image_size": 448}
+    vocab_cfg = vocab_cfg or {"max_descriptors": 200000, "spherical": True}
+    tr, _ = cache.get_or_compute(cache_dir, f"{tag}_train", extractor, params, lambda: None)
+    te, _ = cache.get_or_compute(cache_dir, f"{tag}_test", extractor, params, lambda: None)
+    meta = np.load(Path(cache_dir) / f"{tag}__meta.npz", allow_pickle=False)
+    labels = meta["labels"].astype(bool)
+    norms = np.linalg.norm(np.asarray(te.desc, np.float32), axis=1)
+    if np.allclose(np.median(norms), 1.0, atol=1e-2):
+        raise ValueError("cached features are already L2-normalised; token norms are not recoverable")
+    trd, ted = l2n(np.asarray(tr.desc, np.float32)), l2n(np.asarray(te.desc, np.float32))
+    vkey = {"tag": tag, "extractor": extractor, "params": params, "normalize": True, "k": k, "seed": seed,
+            "vocab": vocab_cfg}
+    vocab, _ = cached_vocabulary(cache_dir, vkey, lambda: build_vocabulary(trd, k, seed=seed, **vocab_cfg))
+    cb, _ = nearest_word(ted, vocab)
+    cs = min_dist(ted, trd[np.sort(greedy_coreset(trd, k, seed=seed))])
+    n_img = len(labels)
+    pct = rankdata(norms) / len(norms)              # percentile of each patch's norm, 0..1
+    out = {"tag": tag, "extractor": extractor, "k": k, "seed": seed,
+           "spearman_codebook_score_vs_norm": float(spearmanr(cb, norms).correlation),
+           "spearman_coreset_score_vs_norm": float(spearmanr(cs, norms).correlation)}
+    for name, s in (("codebook", cb), ("coreset", cs)):
+        top = s.reshape(n_img, -1).argmax(1) + np.arange(n_img) * (len(s) // n_img)
+        p = pct[top][~labels]
+        out[f"{name}_top_patch_norm_pct_median"] = float(np.median(p))
+        out[f"{name}_top_patch_in_top1pct_norm"] = float((p >= 0.99).mean())
+    return out

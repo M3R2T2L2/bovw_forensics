@@ -1015,6 +1015,96 @@ pp.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
 ]
 
 
+_RANDOM_CMP = """import pandas as pd
+from pathlib import Path
+from bovw import stats
+from bovw.sweep import load_results
+
+RES = "/content/drive/MyDrive/bovw-forensics/results"
+BASE = {"mvtec": "p0_anomaly_mvtec_v2", "visa": "p0_anomaly_visa", "3cad": "p0_anomaly_3cad"}
+
+def random_comparison(ds):
+    base = pd.read_csv(f"{RES}/{BASE[ds]}.csv")
+    base = base[base.method.isin(["codebook_dist", "coreset_knn"]) & (base.extractor == "dinov2_s")]
+    rnd = load_results(Path(RES) / f"p0_random_{ds}.jsonl")
+    d = pd.concat([base, rnd], ignore_index=True)
+    d["k"] = d["k"].astype(int)
+    m = ["aupro", "pixel_auroc", "image_auroc", "image_auroc_top10"]
+    out = pd.concat([stats.compare({ds: d}, a, b, ks=(64, 256, 1024), metrics=m)
+                     for a, b in [("codebook_dist", "random_knn"), ("random_knn", "coreset_knn")]])
+    means = d.groupby(["method", "k", "category"])[m].mean().groupby(level=[0, 1]).mean().round(3)
+    return out, means
+"""
+
+cells_14 = [
+    md("""# P0 · Second referee report: random-sample baseline, token norms, near-duplicates (exploratory)
+
+| Section | Question |
+|---|---|
+| Random sample of real patches, with AUPRO (MVTec AD, VisA, 3CAD) | how much of the codebook-vs-coreset gap is "k-means is good" and how much is "greedy k-center is a poor choice at small M"? |
+| Token norms (DINOv2-B, with and without registers, MVTec AD) | do the highest-scoring patches of normal images have unusually large token norms, as the artifact-token explanation of the K = 64 collapse predicts? |
+| Near-duplicates (3CAD) | does a perceptual hash find training images that nearly match test images, beyond exact copies? |
+
+MVTec AD and VisA reuse cached features (no download). 3CAD needs its archive in `MyDrive/bovw-forensics/data/`
+and re-extracts features. **Runtime (T4):** about 1 h, plus 3–4 h for the 3CAD random run (last section).
+Finished runs are saved; Run all again after a disconnect to resume."""),
+    *setup_cells(),
+
+    md("## 2 · Random-sample baseline on MVTec AD and VisA"),
+    code("""import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+import torch
+if not torch.cuda.is_available():
+    raise SystemExit("No GPU: Runtime > Change runtime type > T4 GPU, then Run all.")
+from bovw.sweep import load_config
+from bovw import anomaly
+for ds in ["mvtec", "visa"]:
+    anomaly.run(load_config(f"configs/p0_random_{ds}.yaml"))"""),
+    code(_RANDOM_CMP + """
+tabs = []
+for ds in ["mvtec", "visa"]:
+    out, means = random_comparison(ds)
+    out.to_csv(f"{RES}/p0_random_{ds}_paired.csv", index=False)
+    means.to_csv(f"{RES}/p0_random_{ds}_means.csv")
+    display(means)
+    tabs.append(out)
+pd.concat(tabs).drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+
+    md("## 3 · Token norms of the highest-scoring normal patches (DINOv2-B, MVTec AD, K = 64, seed 0)"),
+    code("""from bovw import ad_data, review
+CACHE = "/content/drive/MyDrive/bovw-forensics/cache"
+rows = []
+for ex in ["dinov2_b", "dinov2_b_reg"]:
+    for cat in ad_data.MVTEC_CATEGORIES:
+        try:
+            rows.append({"category": cat, **review.token_norm_check(CACHE, f"mvtec_{cat}_s448_m256", ex, k=64)})
+        except Exception as e:
+            print(ex, cat, "skipped:", e)
+tn = pd.DataFrame(rows)
+tn.to_csv(f"{RES}/p0_token_norms_mvtec.csv", index=False)
+cols = ["codebook_top_patch_norm_pct_median", "codebook_top_patch_in_top1pct_norm",
+        "coreset_top_patch_norm_pct_median", "coreset_top_patch_in_top1pct_norm",
+        "spearman_codebook_score_vs_norm", "spearman_coreset_score_vs_norm"]
+tn.groupby("extractor")[cols].mean().round(3)"""),
+
+    md("## 4 · 3CAD: perceptual near-duplicates, then the random-sample baseline"),
+    code("""import torch
+""" + _DATA_ANY + """
+ROOT3 = get_3cad()
+nd = pd.DataFrame([review.near_duplicates(ROOT3, c, thresholds=(0, 4, 8)) for c in ad_data.THREECAD_CATEGORIES])
+nd.to_csv(f"{RES}/p0_3cad_near_duplicates.csv", index=False)
+nd"""),
+    code("""cfg = load_config("configs/p0_random_3cad.yaml")
+cfg["data"]["root"] = ROOT3
+anomaly.run(cfg)
+out, means = random_comparison("3cad")
+out.to_csv(f"{RES}/p0_random_3cad_paired.csv", index=False)
+means.to_csv(f"{RES}/p0_random_3cad_means.csv")
+display(means)
+out.drop(columns=["p_sign", "p_wilcoxon"]).round(3)"""),
+]
+
+
 def write(cells, name):
     for i, c in enumerate(cells):
         c["id"] = f"cell-{i:02d}"  # deterministic ids: regenerating does not churn git diffs
@@ -1040,3 +1130,4 @@ write(cells_10, "10_p0_review_followups.ipynb")
 write(cells_11, "11_p0_dinov2b.ipynb")
 write(cells_12, "12_p0_3cad_hires.ipynb")
 write(cells_13, "13_p0_3cad_pad.ipynb")
+write(cells_14, "14_p0_review2.ipynb")

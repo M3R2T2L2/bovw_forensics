@@ -63,3 +63,39 @@ def test_inspect_train_folder(tmp_path):
     assert out["n_train"] == 5 and out["n_test"] == 2
     assert out["dup_within_train"] == 1 and out["train_also_in_test"] == 1
     assert out["train_sizes"].startswith("30x20") and fig is None
+
+
+def test_near_duplicates(tmp_path):
+    import cv2
+
+    rng = np.random.default_rng(0)
+    base = tmp_path / "cat"
+    for sub in ["train/good", "test/good"]:
+        (base / sub).mkdir(parents=True)
+    ims = [cv2.GaussianBlur(rng.integers(0, 255, (64, 64, 3), dtype=np.uint8), (0, 0), 3) for _ in range(4)]
+    for i, im in enumerate(ims):
+        cv2.imwrite(str(base / "train/good" / f"{i}.png"), im)
+    cv2.imwrite(str(base / "test/good" / "near.jpg"), np.clip(ims[2].astype(int) + 3, 0, 255).astype(np.uint8))
+    cv2.imwrite(str(base / "test/good" / "other.png"),
+                cv2.GaussianBlur(rng.integers(0, 255, (64, 64, 3), dtype=np.uint8), (0, 0), 3))
+    r = review.near_duplicates(tmp_path, "cat", thresholds=(0, 4))
+    assert r["n_train"] == 4 and r["n_test"] == 2
+    assert r["test_near_train_le4"] == 1 and r["train_near_train_le4"] == 0
+
+
+def test_token_norm_check(tmp_path):
+    from bovw import cache as fcache
+    from bovw.extract import LocalFeatures
+
+    rng = np.random.default_rng(0)
+    side, d = 4, 8
+    tr = rng.normal(size=(30 * side * side, d)).astype(np.float32)
+    te = rng.normal(size=(10 * side * side, d)).astype(np.float32)
+    te[::side * side] *= 20            # one huge-norm "artifact" token per test image
+    for name, x, n in (("t_train", tr, 30), ("t_test", te, 10)):
+        fcache.get_or_compute(tmp_path, name, "x", {"image_size": 448},
+                              lambda x=x, n=n: LocalFeatures(desc=x, offsets=np.arange(0, (n + 1) * side * side,
+                                                                                         side * side)))
+    np.savez(tmp_path / "t__meta.npz", labels=np.zeros(10, int))
+    r = review.token_norm_check(tmp_path, "t", "x", k=8)
+    assert 0 <= r["codebook_top_patch_norm_pct_median"] <= 1 and "spearman_coreset_score_vs_norm" in r

@@ -30,6 +30,7 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_dinov2breg_mvtec_paired.csv | DINOv2-B with registers on MVTec: codebook-vs-coreset paired CIs (register control) | 11 |
 | p0_dinov2b_visa_paired.csv, p0_dinov2b_3cad_paired.csv | DINOv2-B on VisA (12) and 3CAD (7; Aluminum_New_Ipad skipped): paired CIs | 11 |
 | p0_3cad_pad_vs_stretch.csv, p0_3cad_pad_per_category_aupro1024.csv | 3CAD with images padded to square and duplicate/leaked training images removed, vs. the original stretched run | 13 |
+| stats_family_bootstrap.csv | codebook-vs-coreset intervals resampling families of related categories (pcb1-4, macaroni1-2, paired 3CAD aluminium parts) instead of categories | — |
 
 The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`, `p0_lexicon_mvtec.csv`) are on Drive and still to be copied here.
 
