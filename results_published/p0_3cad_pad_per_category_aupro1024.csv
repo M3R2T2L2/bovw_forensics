@@ -1,0 +1,9 @@
+category,codebook_padded,codebook_stretched,coreset_padded,coreset_stretched
+Aluminum_Camera_Cover,0.842,0.862,0.761,0.781
+Aluminum_Ipad,0.885,0.877,0.709,0.701
+Aluminum_Middle_Frame,0.819,0.808,0.688,0.66
+Aluminum_New_Ipad,0.771,0.764,0.562,0.588
+Aluminum_New_Middle_Frame,0.705,0.672,0.544,0.509
+Aluminum_Pc,0.605,0.593,0.487,0.463
+Copper_Stator,0.718,0.718,0.579,0.579
+Iron_Stator,0.46,0.46,0.353,0.353

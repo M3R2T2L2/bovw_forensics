@@ -1,0 +1,7 @@
+method,k,image_auroc_padded,image_auroc_stretched,image_auroc_top10_padded,image_auroc_top10_stretched,pixel_auroc_padded,pixel_auroc_stretched,aupro_padded,aupro_stretched
+codebook_dist,64,0.763,0.761,0.753,0.752,0.91,0.905,0.717,0.704
+codebook_dist,256,0.767,0.773,0.77,0.776,0.927,0.924,0.713,0.718
+codebook_dist,1024,0.791,0.793,0.797,0.801,0.935,0.931,0.726,0.719
+coreset_knn,64,0.637,0.619,0.643,0.622,0.765,0.77,0.367,0.372
+coreset_knn,256,0.696,0.696,0.702,0.703,0.843,0.832,0.493,0.476
+coreset_knn,1024,0.763,0.765,0.769,0.77,0.88,0.877,0.585,0.579

@@ -27,6 +27,9 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_dinov2b_mvtec.csv, p0_dinov2b_mvtec_paired.csv | DINOv2-B on MVTec: per-run results and codebook-vs-coreset paired CIs | 11 |
 | p0_3cad_train_inspection.csv | 3CAD training folders: counts, sizes, duplicates, train/test overlap | 12 |
 | p0_3cad_hires_vs_448.csv | 3CAD at 560 vs. 448 px, 7 categories (Aluminum_New_Ipad excluded: RAM) | 12 |
+| p0_dinov2breg_mvtec_paired.csv | DINOv2-B with registers on MVTec: codebook-vs-coreset paired CIs (register control) | 11 |
+| p0_dinov2b_visa_paired.csv, p0_dinov2b_3cad_paired.csv | DINOv2-B on VisA (12) and 3CAD (7; Aluminum_New_Ipad skipped): paired CIs | 11 |
+| p0_3cad_pad_vs_stretch.csv, p0_3cad_pad_per_category_aupro1024.csv | 3CAD with images padded to square and duplicate/leaked training images removed, vs. the original stretched run | 13 |
 
 The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`, `p0_lexicon_mvtec.csv`) are on Drive and still to be copied here.
 
