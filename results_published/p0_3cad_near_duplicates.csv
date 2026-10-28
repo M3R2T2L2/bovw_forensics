@@ -1,0 +1,9 @@
+category,n_train,n_test,train_near_train_le0,test_near_train_le0,train_near_train_le4,test_near_train_le4,train_near_train_le8,test_near_train_le8
+Aluminum_Camera_Cover,784,1446,143,129,544,751,733,1093
+Aluminum_Ipad,2096,2047,414,243,1139,822,1731,1362
+Aluminum_Middle_Frame,1548,1479,1122,705,1502,1290,1539,1442
+Aluminum_New_Ipad,2233,4936,1572,2643,1988,3851,2093,4379
+Aluminum_New_Middle_Frame,1072,1406,305,354,702,811,923,1148
+Aluminum_Pc,1698,3161,961,1183,1513,2311,1626,2747
+Copper_Stator,409,959,11,12,130,205,252,483
+Iron_Stator,653,1112,32,37,236,365,492,764

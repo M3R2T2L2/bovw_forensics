@@ -31,6 +31,9 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_dinov2b_visa_paired.csv, p0_dinov2b_3cad_paired.csv | DINOv2-B on VisA (12) and 3CAD (7; Aluminum_New_Ipad skipped): paired CIs | 11 |
 | p0_3cad_pad_vs_stretch.csv, p0_3cad_pad_per_category_aupro1024.csv | 3CAD with images padded to square and duplicate/leaked training images removed, vs. the original stretched run | 13 |
 | stats_family_bootstrap.csv | codebook-vs-coreset intervals resampling families of related categories (pcb1-4, macaroni1-2, paired 3CAD aluminium parts) instead of categories | — |
+| p0_random_mvtec.csv, p0_random_means.csv, p0_random_paired_aupro.csv | uniform random sample of real patches as the memory (AUPRO), vs. codebook and coreset; per-run file for MVTec, VisA/3CAD per-run files on Drive | 14 |
+| p0_token_norms_mvtec.csv | DINOv2-B with/without registers: token-norm percentile of each normal image's top-scoring patch, K = 64 | 14 |
+| p0_3cad_near_duplicates.csv | dHash (64-bit) near-duplicate counts within train and train-vs-test, 3CAD | 14 |
 
 Per-run files behind the review summaries: `p0_review_mvtec.csv`, `p0_review_visa.csv` (notebook 09 controls), `p0_review_discovery_mvtec.csv`, `p0_lexicon_mvtec.csv`, `p0_dinov2breg_mvtec.csv`, `p0_dinov2b_visa.csv`, `p0_dinov2b_3cad.csv`, `p0_3cad_pad.csv`. Only the STL-10 rerun's per-run file (`p0_review_stl10.csv`, 12 rows) is still on Drive; its summary is here.
 

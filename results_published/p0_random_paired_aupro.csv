@@ -1,0 +1,19 @@
+comparison,dataset,k,metric,n_categories,mean_diff,ci_low,ci_high,wins,ties,losses
+codebook_dist - random_knn,mvtec,64,aupro,15,0.0486,0.0276,0.0702,13,1,1
+codebook_dist - random_knn,mvtec,256,aupro,15,0.0168,0.0055,0.0304,11,0,4
+codebook_dist - random_knn,mvtec,1024,aupro,15,0.0092,0.0009,0.0195,9,0,6
+random_knn - coreset_knn,mvtec,64,aupro,15,0.0334,0.0056,0.0683,12,0,3
+random_knn - coreset_knn,mvtec,256,aupro,15,0.0223,0.0088,0.0388,12,1,2
+random_knn - coreset_knn,mvtec,1024,aupro,15,0.0103,-0.0002,0.0207,12,0,3
+codebook_dist - random_knn,visa,64,aupro,12,0.1029,0.0625,0.1464,12,0,0
+codebook_dist - random_knn,visa,256,aupro,12,0.0485,0.0234,0.0753,11,0,1
+codebook_dist - random_knn,visa,1024,aupro,12,0.0246,0.0127,0.0369,11,1,0
+random_knn - coreset_knn,visa,64,aupro,12,0.1698,0.1011,0.2454,11,0,1
+random_knn - coreset_knn,visa,256,aupro,12,0.1176,0.0783,0.1611,12,0,0
+random_knn - coreset_knn,visa,1024,aupro,12,0.0540,0.0306,0.0784,10,0,2
+codebook_dist - random_knn,3cad,64,aupro,8,0.0911,0.0402,0.1342,7,0,1
+codebook_dist - random_knn,3cad,256,aupro,8,0.0466,0.0227,0.0691,6,1,1
+codebook_dist - random_knn,3cad,1024,aupro,8,0.0270,-0.0047,0.0533,7,0,1
+random_knn - coreset_knn,3cad,64,aupro,8,0.2405,0.1683,0.3103,8,0,0
+random_knn - coreset_knn,3cad,256,aupro,8,0.1952,0.1372,0.2476,8,0,0
+random_knn - coreset_knn,3cad,1024,aupro,8,0.1129,0.0733,0.1520,8,0,0
