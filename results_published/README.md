@@ -32,6 +32,6 @@ Columns are documented in `bovw/anomaly.py` and `bovw/sweep.py`.
 | p0_3cad_pad_vs_stretch.csv, p0_3cad_pad_per_category_aupro1024.csv | 3CAD with images padded to square and duplicate/leaked training images removed, vs. the original stretched run | 13 |
 | stats_family_bootstrap.csv | codebook-vs-coreset intervals resampling families of related categories (pcb1-4, macaroni1-2, paired 3CAD aluminium parts) instead of categories | — |
 
-The per-run files behind the review summary (`p0_review_mvtec.csv`, `p0_review_visa.csv`, `p0_review_discovery_mvtec.csv`, `p0_review_stl10.csv`, `p0_lexicon_mvtec.csv`) are on Drive and still to be copied here.
+Per-run files behind the review summaries: `p0_review_mvtec.csv`, `p0_review_visa.csv` (notebook 09 controls), `p0_review_discovery_mvtec.csv`, `p0_lexicon_mvtec.csv`, `p0_dinov2breg_mvtec.csv`, `p0_dinov2b_visa.csv`, `p0_dinov2b_3cad.csv`, `p0_3cad_pad.csv`. Only the STL-10 rerun's per-run file (`p0_review_stl10.csv`, 12 rows) is still on Drive; its summary is here.
 
 Per-image scores and saved maps are on Drive (`results/scores`, `results/maps`), not here.
